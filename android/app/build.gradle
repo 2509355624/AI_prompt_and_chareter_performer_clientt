@@ -8,7 +8,9 @@ plugins {
 android {
     namespace = "com.example.console_ui_master_app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Plugins (gal / path_provider / permission_handler / shared_preferences / sqflite)
+    // require NDK 27+; Flutter default may be older.
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8

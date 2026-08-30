@@ -1,23 +1,63 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../models/preset.dart';
 import '../models/generate_job.dart';
 import '../models/character.dart';
 import '../models/chat_message.dart';
+import 'sse_client.dart';
 
-/// API 服务层
-/// 封装所有后端接口调用
+/// API 服务层：客户端只连局域网 baseUrl，密钥全在服务端 .env。
 class ApiService {
-  final Dio _dio = Dio();
+  final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      // 普通 REST；SSE 在 Options 里单独放宽
+      receiveTimeout: const Duration(seconds: 30),
+    ),
+  );
   String _baseUrl = '';
 
   String get baseUrl => _baseUrl;
 
   void setBaseUrl(String url) {
-    // 规范化 URL
     _baseUrl = url.endsWith('/') ? url.substring(0, url.length - 1) : url;
     _dio.options.baseUrl = _baseUrl;
+  }
+
+  static Options get _sseOptions => Options(
+        headers: {'Accept': 'text/event-stream'},
+        responseType: ResponseType.stream,
+        receiveTimeout: const Duration(hours: 2),
+        sendTimeout: const Duration(seconds: 30),
+      );
+
+  Stream<Map<String, dynamic>> _readSse(Response response) {
+    final controller = StreamController<Map<String, dynamic>>();
+    final parser = SseParser();
+
+    () async {
+      try {
+        final stream = response.data.stream as Stream<dynamic>;
+        await for (final chunk in stream) {
+          final bytes = chunk is List<int>
+              ? chunk
+              : (chunk as List).cast<int>();
+          for (final event in parser.push(bytes)) {
+            controller.add(event);
+          }
+        }
+        final last = parser.finish();
+        if (last != null) controller.add(last);
+        await controller.close();
+      } catch (e) {
+        if (!controller.isClosed) {
+          controller.addError(e);
+          await controller.close();
+        }
+      }
+    }();
+
+    return controller.stream;
   }
 
   // ============================================================
@@ -46,19 +86,16 @@ class ApiService {
   //  图片生成相关
   // ============================================================
 
-  /// 获取生成预设列表
   Future<Map<String, dynamic>> getGeneratePresets() async {
     final response = await _dio.get('/api/comfy/generate-presets');
     return Map<String, dynamic>.from(response.data);
   }
 
-  /// 获取生成设置
   Future<Map<String, dynamic>> getGenerateSettings() async {
     final response = await _dio.get('/api/comfy/generate-settings');
     return Map<String, dynamic>.from(response.data);
   }
 
-  /// 获取 Checkpoint 列表
   Future<List<String>> getCheckpoints() async {
     try {
       final response = await _dio.get('/api/comfy/checkpoints');
@@ -91,50 +128,23 @@ class ApiService {
             'overrides': overrides,
             'stream': true,
           },
-          options: Options(
-            headers: {
-              'Accept': 'text/event-stream',
-            },
-            responseType: ResponseType.stream,
-          ),
+          options: _sseOptions,
         );
-
-        final stream = response.data.stream;
-        String buffer = '';
-
-        await for (final chunk in stream) {
-          final text = utf8.decode(chunk);
-          buffer += text;
-
-          // 按行分割处理 SSE 事件
-          final lines = buffer.split('\n');
-          buffer = lines.removeLast(); // 保留不完整的行
-
-          for (final line in lines) {
-            if (line.startsWith('data: ')) {
-              final dataStr = line.substring(6).trim();
-              if (dataStr.isEmpty) continue;
-              try {
-                final json = jsonDecode(dataStr);
-                controller.add(Map<String, dynamic>.from(json));
-              } catch (_) {
-                controller.add({'raw': dataStr});
-              }
-            }
-          }
+        await for (final event in _readSse(response)) {
+          controller.add(event);
         }
-
-        controller.close();
+        await controller.close();
       } catch (e) {
-        controller.addError(e);
-        controller.close();
+        if (!controller.isClosed) {
+          controller.addError(e);
+          await controller.close();
+        }
       }
     }();
 
     return controller.stream;
   }
 
-  /// 取消生成任务
   Future<bool> cancelGenerateJob(String jobId) async {
     try {
       await _dio.post('/api/comfy/generate-jobs/$jobId/cancel');
@@ -144,7 +154,20 @@ class ApiService {
     }
   }
 
-  /// 获取最近的生成任务
+  Future<GenerateJob?> getGenerateJob(String jobId) async {
+    try {
+      final response = await _dio.get('/api/comfy/generate-jobs/$jobId');
+      final data = Map<String, dynamic>.from(response.data);
+      final job = data['job'];
+      if (job is Map) {
+        return GenerateJob.fromJson({'job': job});
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<List<GenerateJob>> getRecentJobs({int limit = 10}) async {
     try {
       final response =
@@ -165,20 +188,20 @@ class ApiService {
   //  角色扮演相关
   // ============================================================
 
-  /// 获取角色列表
   Future<List<Character>> getCharacters() async {
     final response = await _dio.get('/api/characters');
     final list = List.from(response.data);
-    return list.map((e) => Character.fromJson(Map<String, dynamic>.from(e))).toList();
+    return list
+        .map((e) => Character.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
-  /// 获取对话历史
   Future<Map<String, dynamic>> getChatHistory(String characterId) async {
     final response = await _dio.get('/api/chat-history/$characterId');
     return Map<String, dynamic>.from(response.data);
   }
 
-  /// 发起一轮对话（SSE 流式）。密钥由服务端 .env 解析，客户端不传。
+  /// 发起一轮对话（SSE）。密钥由服务端 .env 解析。
   Stream<Map<String, dynamic>> chatTurnStream({
     required String characterId,
     required List<Map<String, dynamic>> messages,
@@ -187,13 +210,13 @@ class ApiService {
     String appearancePrompt = '',
     String outfitPrompt = '',
     List<Map<String, dynamic>> turnMemory = const [],
+    Map<String, dynamic>? previousVisual,
   }) {
     final controller = StreamController<Map<String, dynamic>>();
 
     () async {
       try {
-        // 第一步：创建 chat-turn（provider/model/key 走服务端默认）
-        final createResp = await _dio.post('/api/chat-turn', data: {
+        final body = <String, dynamic>{
           'characterId': characterId,
           'messages': messages,
           'systemPrompt': systemPrompt,
@@ -201,79 +224,66 @@ class ApiService {
           'appearancePrompt': appearancePrompt,
           'outfitPrompt': outfitPrompt,
           'turnMemory': turnMemory,
-        });
+        };
+        if (previousVisual != null) {
+          body['previousVisual'] = previousVisual;
+        }
 
+        final createResp = await _dio.post('/api/chat-turn', data: body);
         final turnId = createResp.data['turnId']?.toString() ?? '';
         if (turnId.isEmpty) {
           controller.addError('Failed to create chat turn');
-          controller.close();
+          await controller.close();
           return;
         }
 
-        // 第二步：订阅 SSE 流
         final response = await _dio.get(
           '/api/chat-turn/$turnId/stream',
-          options: Options(
-            headers: {
-              'Accept': 'text/event-stream',
-            },
-            responseType: ResponseType.stream,
-          ),
+          options: _sseOptions,
         );
-
-        final stream = response.data.stream;
-        String buffer = '';
-
-        await for (final chunk in stream) {
-          final text = utf8.decode(chunk);
-          buffer += text;
-
-          final lines = buffer.split('\n');
-          buffer = lines.removeLast();
-
-          for (final line in lines) {
-            if (line.startsWith('data: ')) {
-              final dataStr = line.substring(6).trim();
-              if (dataStr.isEmpty) continue;
-              try {
-                final json = jsonDecode(dataStr);
-                controller.add(Map<String, dynamic>.from(json));
-              } catch (_) {
-                controller.add({'raw': dataStr});
-              }
-            }
-          }
+        await for (final event in _readSse(response)) {
+          controller.add(event);
         }
-
-        controller.close();
+        await controller.close();
       } catch (e) {
-        controller.addError(e);
-        controller.close();
+        if (!controller.isClosed) {
+          controller.addError(e);
+          await controller.close();
+        }
       }
     }();
 
     return controller.stream;
   }
 
-  /// 提交角色出图任务
-  Future<String?> submitCharacterImage({
+  /// 入队角色出图（与 Web 一致走 `/api/image-jobs`；密钥服务端补齐）
+  Future<String?> createImageJob({
     required String characterId,
     required String messageId,
-    required Map<String, dynamic> payload,
+    required String replySnippet,
+    String userMessage = '',
+    Map<String, dynamic>? visual,
+    Map<String, dynamic>? previousVisual,
+    String emotion = '平静',
+    num? intensity,
   }) async {
     try {
-      final response = await _dio.post('/api/character-image', data: {
+      final response = await _dio.post('/api/image-jobs', data: {
         'characterId': characterId,
         'messageId': messageId,
-        ...payload,
+        'replySnippet': replySnippet,
+        'userMessage': userMessage,
+        'emotion': emotion,
+        if (intensity != null) 'intensity': intensity,
+        if (visual != null) 'visual': visual,
+        if (previousVisual != null) 'previousVisual': previousVisual,
       });
       return response.data['imageJobId']?.toString();
-    } catch (_) {
-      return null;
+    } catch (e) {
+      throw Exception('出图入队失败：$e');
     }
   }
 
-  /// 订阅角色出图进度
   Stream<Map<String, dynamic>> imageJobStream(String jobId) {
     final controller = StreamController<Map<String, dynamic>>();
 
@@ -281,49 +291,23 @@ class ApiService {
       try {
         final response = await _dio.get(
           '/api/image-jobs/$jobId/stream',
-          options: Options(
-            headers: {
-              'Accept': 'text/event-stream',
-            },
-            responseType: ResponseType.stream,
-          ),
+          options: _sseOptions,
         );
-
-        final stream = response.data.stream;
-        String buffer = '';
-
-        await for (final chunk in stream) {
-          final text = utf8.decode(chunk);
-          buffer += text;
-
-          final lines = buffer.split('\n');
-          buffer = lines.removeLast();
-
-          for (final line in lines) {
-            if (line.startsWith('data: ')) {
-              final dataStr = line.substring(6).trim();
-              if (dataStr.isEmpty) continue;
-              try {
-                final json = jsonDecode(dataStr);
-                controller.add(Map<String, dynamic>.from(json));
-              } catch (_) {
-                controller.add({'raw': dataStr});
-              }
-            }
-          }
+        await for (final event in _readSse(response)) {
+          controller.add(event);
         }
-
-        controller.close();
+        await controller.close();
       } catch (e) {
-        controller.addError(e);
-        controller.close();
+        if (!controller.isClosed) {
+          controller.addError(e);
+          await controller.close();
+        }
       }
     }();
 
     return controller.stream;
   }
 
-  /// 保存对话历史
   Future<bool> saveChatHistory({
     required String characterId,
     required List<ChatMessage> messages,
@@ -352,7 +336,6 @@ class ApiService {
     }
   }
 
-  /// 获取工作流配置选项
   Future<Map<String, dynamic>> getWorkflowOptions() async {
     try {
       final response = await _dio.get('/api/comfy/workflow-options');

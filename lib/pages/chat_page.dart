@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:gal/gal.dart';
 import 'package:dio/dio.dart';
 import 'dart:typed_data';
 import '../theme/app_theme.dart';
@@ -10,6 +9,7 @@ import '../providers/settings_provider.dart';
 import '../models/character.dart';
 import '../models/chat_message.dart';
 import '../widgets/sticker_widgets.dart';
+import '../utils/gallery_saver.dart';
 import 'settings_page.dart';
 
 /// 对话页：中间聊天；左抽屉角色信息；右抽屉连接状态（无密钥）。
@@ -85,11 +85,11 @@ class _ChatPageState extends State<ChatPage> {
       );
       final bytes = Uint8List.fromList(response.data);
 
-      await Gal.putImageBytes(bytes);
+      await saveImageBytesToGallery(bytes, name: 'roleplay_${DateTime.now().millisecondsSinceEpoch}');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已保存到相册 📱')),
+          const SnackBar(content: Text('已保存到相册')),
         );
       }
     } catch (e) {

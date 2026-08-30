@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:gal/gal.dart';
 import 'package:dio/dio.dart';
 import 'dart:typed_data';
 import '../theme/app_theme.dart';
@@ -9,6 +8,7 @@ import '../providers/generate_provider.dart';
 import '../providers/settings_provider.dart';
 import '../models/generate_job.dart';
 import '../widgets/sticker_widgets.dart';
+import '../utils/gallery_saver.dart';
 
 /// ComfyUI 图片生成页
 class GeneratePage extends StatefulWidget {
@@ -63,19 +63,20 @@ class _GeneratePageState extends State<GeneratePage> {
           ? imageUrl
           : '${settings.serverUrl}$imageUrl';
 
-      // 下载图片
       final response = await Dio().get(
         fullUrl,
         options: Options(responseType: ResponseType.bytes),
       );
       final bytes = Uint8List.fromList(response.data);
 
-      // 保存到相册
-      await Gal.putImageBytes(bytes);
+      await saveImageBytesToGallery(
+        bytes,
+        name: 'comfy_${DateTime.now().millisecondsSinceEpoch}',
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已保存到相册 📱')),
+          const SnackBar(content: Text('已保存到相册')),
         );
       }
     } catch (e) {
