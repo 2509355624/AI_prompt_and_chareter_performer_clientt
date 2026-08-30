@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import '../models/generate_job.dart';
 import '../models/character.dart';
 import '../models/chat_message.dart';
@@ -249,6 +250,7 @@ class ApiService {
           await controller.close();
           return;
         }
+        controller.add({'event': 'turn_created', 'turnId': turnId});
 
         final response = await _dio.get(
           '/api/chat-turn/$turnId/stream',
@@ -259,6 +261,14 @@ class ApiService {
         }
         await controller.close();
       } catch (e) {
+        // 服务端主动 end() 后，部分平台会抛 Connection closed；不当硬错误往上抛
+        final msg = e.toString();
+        if (msg.contains('Connection closed') ||
+            msg.contains('Connection reset')) {
+          debugPrint('chat-turn SSE hangup (treated as end): $e');
+          if (!controller.isClosed) await controller.close();
+          return;
+        }
         if (!controller.isClosed) {
           controller.addError(e);
           await controller.close();
@@ -267,6 +277,18 @@ class ApiService {
     }();
 
     return controller.stream;
+  }
+
+  Future<Map<String, dynamic>?> getChatTurn(String turnId) async {
+    try {
+      final response = await _dio.get('/api/chat-turn/$turnId');
+      final data = Map<String, dynamic>.from(response.data as Map);
+      final turn = data['turn'];
+      if (turn is Map) return Map<String, dynamic>.from(turn);
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 入队角色出图（与 Web 一致走 `/api/image-jobs`；密钥服务端补齐）

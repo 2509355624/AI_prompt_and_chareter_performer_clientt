@@ -85,7 +85,8 @@ class CharacterProvider extends ChangeNotifier {
       id: aiMsgId,
       role: MessageRole.assistant,
       content: '',
-      imageStatus: ImageStatus.queued,
+      // 对话还没完，不要显示「出图排队」——等真正 createImageJob 成功再标 queued
+      imageStatus: ImageStatus.none,
     );
     _messages.add(aiMsg);
     notifyListeners();
@@ -115,53 +116,90 @@ class CharacterProvider extends ChangeNotifier {
 
       Map<String, dynamic>? turnDonePayload;
       String? turnError;
+      String? turnId;
 
-      await for (final event in stream) {
-        final type = event['event']?.toString() ?? '';
+      try {
+        await for (final event in stream) {
+          final type = event['event']?.toString() ?? '';
 
-        if (type == 'reply_delta') {
-          final accumulated = event['accumulated']?.toString();
-          if (accumulated != null && accumulated.isNotEmpty) {
-            fullReply = accumulated;
-          } else {
-            final delta = event['delta']?.toString() ?? '';
-            if (delta.isNotEmpty) fullReply += delta;
+          if (type == 'turn_created') {
+            turnId = event['turnId']?.toString();
+            continue;
           }
-          _patchAiMessage(aiMsgId, content: fullReply);
-        } else if (type == 'turn_done') {
-          turnDonePayload = event;
-          final reply = event['reply']?.toString();
-          if (reply != null && reply.isNotEmpty) {
-            fullReply = reply;
+
+          if (type == 'reply_delta') {
+            final accumulated = event['accumulated']?.toString();
+            if (accumulated != null && accumulated.isNotEmpty) {
+              fullReply = accumulated;
+            } else {
+              final delta = event['delta']?.toString() ?? '';
+              if (delta.isNotEmpty) fullReply += delta;
+            }
+            _patchAiMessage(aiMsgId, content: fullReply);
+          } else if (type == 'turn_done') {
+            turnDonePayload = event;
+            final reply = event['reply']?.toString();
+            if (reply != null && reply.isNotEmpty) {
+              fullReply = reply;
+              _patchAiMessage(aiMsgId, content: fullReply);
+            }
+          } else if (type == 'turn_error') {
+            turnError = event['error']?.toString() ?? '对话生成失败';
+          } else if (type == 'snapshot') {
+            final status = event['status']?.toString() ?? '';
+            if (status == 'completed' && event['result'] is Map) {
+              turnDonePayload =
+                  Map<String, dynamic>.from(event['result'] as Map);
+              final reply = turnDonePayload!['reply']?.toString();
+              if (reply != null && reply.isNotEmpty) {
+                fullReply = reply;
+                _patchAiMessage(aiMsgId, content: fullReply);
+              }
+            } else if (status == 'failed') {
+              turnError = event['error']?.toString() ?? '对话生成失败';
+            } else {
+              final snapReply = event['replyText']?.toString() ?? '';
+              if (snapReply.isNotEmpty) {
+                fullReply = snapReply;
+                _patchAiMessage(aiMsgId, content: fullReply);
+              }
+            }
+          } else if (event['reply'] != null &&
+              type.isEmpty &&
+              fullReply.isEmpty) {
+            fullReply = event['reply'].toString();
+            turnDonePayload = event;
             _patchAiMessage(aiMsgId, content: fullReply);
           }
-        } else if (type == 'turn_error') {
-          turnError = event['error']?.toString() ?? '对话生成失败';
-        } else if (type == 'snapshot') {
-          final status = event['status']?.toString() ?? '';
-          if (status == 'completed' && event['result'] is Map) {
-            turnDonePayload = Map<String, dynamic>.from(event['result'] as Map);
-            final reply = turnDonePayload!['reply']?.toString();
+        }
+      } catch (streamErr) {
+        // SSE 正常结束有时也会以 Connection closed 抛出；有正文/turn_done 就当对话成功
+        final msg = streamErr.toString();
+        final recoverable = fullReply.isNotEmpty || turnDonePayload != null;
+        final looksLikeHangup = msg.contains('Connection closed') ||
+            msg.contains('Connection reset') ||
+            msg.contains('HttpException');
+        debugPrint('chatTurnStream ended: $streamErr recoverable=$recoverable');
+        if (!recoverable || !looksLikeHangup) {
+          rethrow;
+        }
+      }
+
+      // 断线但已有 turnId：用 REST 补一次完整结果（含 visual）
+      if (turnDonePayload == null && turnId != null && turnId.isNotEmpty) {
+        final turn = await _api.getChatTurn(turnId);
+        if (turn != null) {
+          final status = turn['status']?.toString() ?? '';
+          if (status == 'completed' && turn['result'] is Map) {
+            turnDonePayload = Map<String, dynamic>.from(turn['result'] as Map);
+            final reply = turnDonePayload?['reply']?.toString();
             if (reply != null && reply.isNotEmpty) {
               fullReply = reply;
               _patchAiMessage(aiMsgId, content: fullReply);
             }
           } else if (status == 'failed') {
-            turnError = event['error']?.toString() ?? '对话生成失败';
-          } else {
-            final snapReply = event['replyText']?.toString() ?? '';
-            if (snapReply.isNotEmpty) {
-              fullReply = snapReply;
-              _patchAiMessage(aiMsgId, content: fullReply);
-            }
+            turnError = turn['error']?.toString() ?? '对话生成失败';
           }
-        } else if (event['reply'] != null &&
-            type.isEmpty &&
-            fullReply.isEmpty) {
-          // 兼容无 event 名的旧格式
-          fullReply = event['reply'].toString();
-          turnDonePayload = event;
-          _patchAiMessage(aiMsgId, content: fullReply);
         }
       }
 
@@ -169,14 +207,18 @@ class CharacterProvider extends ChangeNotifier {
         _patchAiMessage(
           aiMsgId,
           content: '出错了：$turnError',
-          imageStatus: ImageStatus.error,
-          imageError: turnError,
+          imageStatus: ImageStatus.none,
         );
         return;
       }
 
       if (fullReply.isEmpty && turnDonePayload != null) {
         fullReply = turnDonePayload!['reply']?.toString() ?? '';
+      }
+
+      if (fullReply.isEmpty) {
+        _patchAiMessage(aiMsgId, content: '出错了：对话无正文');
+        return;
       }
 
       _patchAiMessage(aiMsgId, content: fullReply);
@@ -233,11 +275,11 @@ class CharacterProvider extends ChangeNotifier {
 
       await _saveHistory();
     } catch (e) {
+      // 对话失败：不要把 chat-turn SSE 错误写进「生图失败」框
       _patchAiMessage(
         aiMsgId,
         content: fullReply.isNotEmpty ? fullReply : '出错了：$e',
-        imageStatus: ImageStatus.error,
-        imageError: e.toString(),
+        imageStatus: ImageStatus.none,
       );
     } finally {
       _isSending = false;
