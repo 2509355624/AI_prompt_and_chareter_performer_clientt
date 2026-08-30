@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
-import '../models/preset.dart';
 import '../models/generate_job.dart';
 import '../models/character.dart';
 import '../models/chat_message.dart';
@@ -157,6 +156,20 @@ class ApiService {
   Future<GenerateJob?> getGenerateJob(String jobId) async {
     try {
       final response = await _dio.get('/api/comfy/generate-jobs/$jobId');
+      final data = Map<String, dynamic>.from(response.data);
+      final job = data['job'];
+      if (job is Map) {
+        return GenerateJob.fromJson({'job': job});
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<GenerateJob?> getActiveGenerateJob() async {
+    try {
+      final response = await _dio.get('/api/comfy/generate-jobs/active');
       final data = Map<String, dynamic>.from(response.data);
       final job = data['job'];
       if (job is Map) {

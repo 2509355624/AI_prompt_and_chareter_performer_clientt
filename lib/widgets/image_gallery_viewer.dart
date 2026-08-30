@@ -1,6 +1,6 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import 'retryable_network_image.dart';
 import 'sticker_widgets.dart';
 
 /// 全屏大图预览：左右翻页 + 保存（不会抢输入框焦点）
@@ -106,19 +106,10 @@ class _ImageGalleryViewerState extends State<ImageGalleryViewer> {
                     itemBuilder: (_, i) {
                       return InteractiveViewer(
                         child: Center(
-                          child: CachedNetworkImage(
+                          child: RetryableNetworkImage(
                             imageUrl: widget.imageUrls[i],
                             fit: BoxFit.contain,
-                            placeholder: (_, __) => const Center(
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                              ),
-                            ),
-                            errorWidget: (_, __, ___) => const Icon(
-                              Icons.broken_image,
-                              color: Colors.white,
-                              size: 48,
-                            ),
+                            darkErrorStyle: true,
                           ),
                         ),
                       );

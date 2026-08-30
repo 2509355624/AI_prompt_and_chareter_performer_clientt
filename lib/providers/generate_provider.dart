@@ -1,11 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../services/api_service.dart';
 import '../services/sse_client.dart';
 import '../models/preset.dart';
 import '../models/generate_job.dart';
 
-/// 图片生成 Provider
+/// 图片生成 Provider：SSE 进度 + jobId 落盘，切后台可轮询恢复
 class GenerateProvider extends ChangeNotifier {
+  static const _prefsActiveJobKey = 'activeGenerateJobId';
+
   final ApiService _api;
 
   List<GeneratePreset> _presets = [];
@@ -13,6 +19,8 @@ class GenerateProvider extends ChangeNotifier {
   GenerateJob? _currentJob;
   bool _isGenerating = false;
   String? _lastError;
+  Timer? _pollTimer;
+  bool _resuming = false;
 
   List<GeneratePreset> get presets => _presets;
   String? get activePresetId => _activePresetId;
@@ -54,6 +62,108 @@ class GenerateProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _persistActiveJobId(String? jobId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (jobId == null || jobId.isEmpty) {
+        await prefs.remove(_prefsActiveJobKey);
+      } else {
+        await prefs.setString(_prefsActiveJobKey, jobId);
+      }
+    } catch (e) {
+      debugPrint('persist jobId failed: $e');
+    }
+  }
+
+  Future<String?> _readPersistedJobId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_prefsActiveJobKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
+  bool _isTerminal(JobStatus? status) {
+    return status == JobStatus.done ||
+        status == JobStatus.error ||
+        status == JobStatus.cancelled;
+  }
+
+  Future<void> _applyJobSnapshot(GenerateJob job) async {
+    debugPrint(
+      '[Generate] snapshot id=${job.id} status=${job.status} '
+      'images=${job.images.length} urls=${job.images}',
+    );
+    _currentJob = job;
+    if (_isTerminal(job.status)) {
+      _isGenerating = false;
+      _stopPolling();
+      await _persistActiveJobId(null);
+      if (job.status == JobStatus.error) {
+        _lastError = job.error;
+      }
+    } else {
+      _isGenerating = true;
+      if (job.id.isNotEmpty) {
+        await _persistActiveJobId(job.id);
+      }
+    }
+    notifyListeners();
+  }
+
+  void _startPolling(String jobId) {
+    if (jobId.isEmpty) return;
+    _stopPolling();
+    _isGenerating = true;
+    unawaited(_persistActiveJobId(jobId));
+    notifyListeners();
+
+    Future<void> tick() async {
+      final polled = await _api.getGenerateJob(jobId);
+      if (polled == null) return;
+      await _applyJobSnapshot(polled);
+      if (_isTerminal(polled.status)) {
+        _stopPolling();
+      }
+    }
+
+    unawaited(tick());
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(tick());
+    });
+  }
+
+  /// 进页 / 回前台：用服务端 active 或本地 jobId 恢复任务
+  Future<void> resumeIfNeeded() async {
+    if (_isGenerating || _resuming) return;
+    _resuming = true;
+    try {
+      GenerateJob? job = await _api.getActiveGenerateJob();
+      if (job == null) {
+        final id = await _readPersistedJobId();
+        if (id != null && id.isNotEmpty) {
+          job = await _api.getGenerateJob(id);
+        }
+      }
+      if (job == null) return;
+
+      await _applyJobSnapshot(job);
+      if (!_isTerminal(job.status) && job.id.isNotEmpty) {
+        _startPolling(job.id);
+      }
+    } catch (e) {
+      debugPrint('resumeIfNeeded failed: $e');
+    } finally {
+      _resuming = false;
+    }
+  }
+
   Future<void> startGenerate({
     required String scene,
     int count = 1,
@@ -62,6 +172,7 @@ class GenerateProvider extends ChangeNotifier {
     if (_activePresetId == null) return;
     if (_isGenerating) return;
 
+    _stopPolling();
     _isGenerating = true;
     _lastError = null;
     _currentJob = GenerateJob(
@@ -83,19 +194,26 @@ class GenerateProvider extends ChangeNotifier {
         _handleGenerateEvent(event);
       }
 
-      // SSE 结束后若仍无图，轮询一次任务详情（与 Web 兜底一致）
       final jobId = _currentJob?.id;
-      if (jobId != null &&
-          jobId.isNotEmpty &&
-          (_currentJob?.images.isEmpty ?? true) &&
-          _currentJob?.status != JobStatus.error) {
+      if (jobId != null && jobId.isNotEmpty) {
         final polled = await _api.getGenerateJob(jobId);
-        if (polled != null && polled.images.isNotEmpty) {
-          _currentJob = polled;
+        if (polled != null) {
+          await _applyJobSnapshot(polled);
+          if (!_isTerminal(polled.status)) {
+            _startPolling(jobId);
+            return;
+          }
+          return;
         }
       }
     } catch (e) {
       debugPrint('Generate error: $e');
+      final jobId = _currentJob?.id;
+      if (jobId != null && jobId.isNotEmpty) {
+        await _persistActiveJobId(jobId);
+        _startPolling(jobId);
+        return;
+      }
       _lastError = e.toString();
       _currentJob = _currentJob?.copyWith(
             status: JobStatus.error,
@@ -106,8 +224,12 @@ class GenerateProvider extends ChangeNotifier {
             status: JobStatus.error,
             error: e.toString(),
           );
+      await _persistActiveJobId(null);
     } finally {
-      _isGenerating = false;
+      if (_pollTimer == null && _isTerminal(_currentJob?.status)) {
+        _isGenerating = false;
+        await _persistActiveJobId(null);
+      }
       notifyListeners();
     }
   }
@@ -135,6 +257,8 @@ class GenerateProvider extends ChangeNotifier {
       case 'expanded':
       case 'manual':
       case 'starting':
+      case 'submitting':
+      case 'downloading':
         _currentJob = (_currentJob ??
                 GenerateJob(
                   id: jobId ?? '',
@@ -156,6 +280,10 @@ class GenerateProvider extends ChangeNotifier {
       case 'completed':
         final doneImages =
             images.isNotEmpty ? images : (_currentJob?.images ?? const []);
+        debugPrint(
+          '[Generate] done jobId=${jobId ?? _currentJob?.id} '
+          'imageCount=${doneImages.length} urls=$doneImages',
+        );
         _currentJob = GenerateJob(
           id: jobId ?? _currentJob?.id ?? '',
           status: JobStatus.done,
@@ -197,19 +325,33 @@ class GenerateProvider extends ChangeNotifier {
               .copyWith(id: jobId);
         }
     }
+
+    final id = _currentJob?.id;
+    if (id != null && id.isNotEmpty) {
+      unawaited(_persistActiveJobId(
+        _isTerminal(_currentJob?.status) ? null : id,
+      ));
+    }
     notifyListeners();
   }
 
   Future<void> cancelCurrent() async {
     final id = _currentJob?.id;
+    _stopPolling();
     if (id != null && id.isNotEmpty) {
       await _api.cancelGenerateJob(id);
     }
     _isGenerating = false;
     _currentJob = _currentJob?.copyWith(status: JobStatus.cancelled);
+    await _persistActiveJobId(null);
     notifyListeners();
   }
 
-  /// 页面里也可能叫 cancelCurrent
   Future<void> cancelGenerate() => cancelCurrent();
+
+  @override
+  void dispose() {
+    _stopPolling();
+    super.dispose();
+  }
 }

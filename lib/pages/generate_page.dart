@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -11,9 +10,10 @@ import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/gallery_saver.dart';
 import '../widgets/image_gallery_viewer.dart';
+import '../widgets/retryable_network_image.dart';
 import '../widgets/sticker_widgets.dart';
 
-/// ComfyUI 图片生成页（P0：键盘收起 + 大图换页）
+/// ComfyUI 图片生成页（键盘收起 + 大图换页 + 任务恢复）
 class GeneratePage extends StatefulWidget {
   const GeneratePage({super.key});
 
@@ -21,7 +21,8 @@ class GeneratePage extends StatefulWidget {
   State<GeneratePage> createState() => _GeneratePageState();
 }
 
-class _GeneratePageState extends State<GeneratePage> {
+class _GeneratePageState extends State<GeneratePage>
+    with WidgetsBindingObserver {
   final _sceneController = TextEditingController();
   final _sceneFocus = FocusNode();
   int _count = 1;
@@ -31,16 +32,27 @@ class _GeneratePageState extends State<GeneratePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<GenerateProvider>().loadPresets();
+      final gen = context.read<GenerateProvider>();
+      gen.loadPresets();
+      gen.resumeIfNeeded();
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sceneController.dispose();
     _sceneFocus.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      context.read<GenerateProvider>().resumeIfNeeded();
+    }
   }
 
   void _dismissKeyboard() {
@@ -296,13 +308,10 @@ class _GeneratePageState extends State<GeneratePage> {
               onTap: () => _openGallery(images, 0),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(AppTheme.radiusLg - 2),
-                child: CachedNetworkImage(
+                child: RetryableNetworkImage(
                   imageUrl: _resolveUrl(url),
                   fit: BoxFit.contain,
-                  placeholder: (_, __) =>
-                      const Center(child: CircularProgressIndicator()),
-                  errorWidget: (_, __, ___) =>
-                      const Icon(Icons.broken_image),
+                  onTap: () => _openGallery(images, 0),
                 ),
               ),
             ),
@@ -336,19 +345,14 @@ class _GeneratePageState extends State<GeneratePage> {
         itemCount: images.length,
         itemBuilder: (_, i) {
           final url = images[i];
-          return GestureDetector(
-            onTap: () => _openGallery(images, i),
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg - 2),
             child: StickerCard(
               padding: EdgeInsets.zero,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppTheme.radiusLg - 2),
-                child: CachedNetworkImage(
-                  imageUrl: _resolveUrl(url),
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => const Center(
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
+              child: RetryableNetworkImage(
+                imageUrl: _resolveUrl(url),
+                fit: BoxFit.cover,
+                onTap: () => _openGallery(images, i),
               ),
             ),
           );
