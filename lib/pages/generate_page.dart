@@ -87,13 +87,21 @@ class _GeneratePageState extends State<GeneratePage>
     setState(() => _savingImage = true);
     try {
       final url = _resolveUrl(imageUrl);
-      // 复用预览已拉过的原图，不再向服务端重复 GET
+      // 原图只来自内存；边框保存才本地全分辨率合成（可能要一两秒，不是重新下图）
       var bytes = await ImageBytesCache.getRaw(url);
       if (withFrame) {
-        bytes = await renderStickerPng(
-          bytes,
-          options: const StickerFrameOptions.paperCollage(),
-        );
+        const frameKeySuffix = '|frame|full';
+        final frameKey = '$url$frameKeySuffix';
+        final cached = ImageBytesCache.peekFramed(frameKey);
+        if (cached != null) {
+          bytes = cached;
+        } else {
+          bytes = await renderStickerPng(
+            bytes,
+            options: const StickerFrameOptions.paperCollage(),
+          );
+          ImageBytesCache.putFramed(frameKey, bytes);
+        }
       }
       await saveImageBytesToGallery(
         bytes,
@@ -378,13 +386,13 @@ class _GeneratePageState extends State<GeneratePage>
             Positioned(
               right: 12,
               bottom: 12,
-              child: StickerButton(
-                text: _savingImage ? '保存中...' : '保存到手机',
-                icon: Icons.save_alt,
-                fontSize: 12,
-                isLoading: _savingImage,
-                onPressed: _savingImage ? null : () => _promptSave(url),
-              ),
+              child:                 StickerButton(
+                  text: _savingImage ? '处理中…' : '保存到手机',
+                  icon: Icons.save_alt,
+                  fontSize: 12,
+                  isLoading: _savingImage,
+                  onPressed: _savingImage ? null : () => _promptSave(url),
+                ),
             ),
           ],
         ),
