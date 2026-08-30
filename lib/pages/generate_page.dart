@@ -1,6 +1,3 @@
-import 'dart:typed_data';
-
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -9,8 +6,10 @@ import '../providers/generate_provider.dart';
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/gallery_saver.dart';
+import '../utils/image_bytes_cache.dart';
+import '../utils/sticker_frame.dart';
+import '../widgets/framed_network_image.dart';
 import '../widgets/image_gallery_viewer.dart';
-import '../widgets/retryable_network_image.dart';
 import '../widgets/sticker_widgets.dart';
 
 /// ComfyUI 图片生成页（键盘收起 + 大图换页 + 任务恢复）
@@ -28,6 +27,8 @@ class _GeneratePageState extends State<GeneratePage>
   int _count = 1;
   String _mode = 'manual';
   bool _savingImage = false;
+  /// 预览默认带小红书边框；保存时可另选原图/边框
+  bool _previewWithFrame = true;
 
   @override
   void initState() {
@@ -81,21 +82,27 @@ class _GeneratePageState extends State<GeneratePage>
         );
   }
 
-  Future<void> _saveImage(String imageUrl) async {
+  Future<void> _saveImage(String imageUrl, {required bool withFrame}) async {
     _dismissKeyboard();
     setState(() => _savingImage = true);
     try {
-      final response = await Dio().get(
-        _resolveUrl(imageUrl),
-        options: Options(responseType: ResponseType.bytes),
-      );
+      final url = _resolveUrl(imageUrl);
+      // 复用预览已拉过的原图，不再向服务端重复 GET
+      var bytes = await ImageBytesCache.getRaw(url);
+      if (withFrame) {
+        bytes = await renderStickerPng(
+          bytes,
+          options: const StickerFrameOptions.paperCollage(),
+        );
+      }
       await saveImageBytesToGallery(
-        Uint8List.fromList(response.data as List<int>),
-        name: 'comfy_${DateTime.now().millisecondsSinceEpoch}',
+        bytes,
+        name:
+            'comfy_${withFrame ? 'frame_' : ''}${DateTime.now().millisecondsSinceEpoch}',
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已保存到相册')),
+        SnackBar(content: Text(withFrame ? '已保存边框图到相册' : '已保存原图到相册')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -107,6 +114,57 @@ class _GeneratePageState extends State<GeneratePage>
     }
   }
 
+  Future<void> _promptSave(String imageUrl) async {
+    _dismissKeyboard();
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppTheme.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '保存到手机',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  '预览默认是贴纸边框；保存可另选原图或边框。',
+                  style: TextStyle(fontSize: 12, color: AppTheme.text2),
+                ),
+                const SizedBox(height: 12),
+                StickerButton(
+                  text: '普通保存（原图）',
+                  icon: Icons.image_outlined,
+                  isPrimary: false,
+                  onPressed: () => Navigator.pop(ctx, 'plain'),
+                ),
+                const SizedBox(height: 8),
+                StickerButton(
+                  text: '边框保存（小红书贴纸）',
+                  icon: Icons.auto_awesome,
+                  onPressed: () => Navigator.pop(ctx, 'frame'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (choice == 'plain') {
+      await _saveImage(imageUrl, withFrame: false);
+    } else if (choice == 'frame') {
+      await _saveImage(imageUrl, withFrame: true);
+    }
+  }
+
   void _openGallery(List<String> images, int index) {
     _dismissKeyboard();
     if (images.isEmpty) return;
@@ -114,7 +172,8 @@ class _GeneratePageState extends State<GeneratePage>
       context,
       imageUrls: images.map(_resolveUrl).toList(),
       initialIndex: index,
-      onSaveIndex: (i) => _saveImage(images[i]),
+      framedPreview: _previewWithFrame,
+      onSaveIndex: (i) => _promptSave(images[i]),
     );
   }
 
@@ -244,7 +303,7 @@ class _GeneratePageState extends State<GeneratePage>
             Icon(Icons.image_outlined, size: 64, color: AppTheme.textMute),
             SizedBox(height: 16),
             Text(
-              '选好预设后，在下方输入场景\n然后点「生成」',
+              '选好预设后，在下方输入场景\n然后点「生成」\n预览默认贴纸边框，保存可选原图/边框',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppTheme.text2, fontSize: 14),
             ),
@@ -308,8 +367,9 @@ class _GeneratePageState extends State<GeneratePage>
               onTap: () => _openGallery(images, 0),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(AppTheme.radiusLg - 2),
-                child: RetryableNetworkImage(
+                child: FramedNetworkImage(
                   imageUrl: _resolveUrl(url),
+                  showFrame: _previewWithFrame,
                   fit: BoxFit.contain,
                   onTap: () => _openGallery(images, 0),
                 ),
@@ -323,7 +383,7 @@ class _GeneratePageState extends State<GeneratePage>
                 icon: Icons.save_alt,
                 fontSize: 12,
                 isLoading: _savingImage,
-                onPressed: _savingImage ? null : () => _saveImage(url),
+                onPressed: _savingImage ? null : () => _promptSave(url),
               ),
             ),
           ],
@@ -349,8 +409,9 @@ class _GeneratePageState extends State<GeneratePage>
             borderRadius: BorderRadius.circular(AppTheme.radiusLg - 2),
             child: StickerCard(
               padding: EdgeInsets.zero,
-              child: RetryableNetworkImage(
+              child: FramedNetworkImage(
                 imageUrl: _resolveUrl(url),
+                showFrame: _previewWithFrame,
                 fit: BoxFit.cover,
                 onTap: () => _openGallery(images, i),
               ),
@@ -384,6 +445,15 @@ class _GeneratePageState extends State<GeneratePage>
                   _dismissKeyboard();
                   setState(() => _mode = 'manual');
                 }),
+                const SizedBox(width: 8),
+                _modeChip(
+                  _previewWithFrame ? '预览·边框' : '预览·原图',
+                  _previewWithFrame,
+                  () {
+                    _dismissKeyboard();
+                    setState(() => _previewWithFrame = !_previewWithFrame);
+                  },
+                ),
                 const Spacer(),
                 const Text('数量：', style: TextStyle(fontSize: 13)),
                 IconButton(

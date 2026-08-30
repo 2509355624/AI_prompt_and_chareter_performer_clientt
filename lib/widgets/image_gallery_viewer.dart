@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'retryable_network_image.dart';
+import 'framed_network_image.dart';
 import 'sticker_widgets.dart';
 
 /// 全屏大图预览：左右翻页 + 保存（不会抢输入框焦点）
@@ -8,6 +8,7 @@ Future<void> showImageGallery(
   BuildContext context, {
   required List<String> imageUrls,
   int initialIndex = 0,
+  bool framedPreview = true,
   required Future<void> Function(int index) onSaveIndex,
 }) {
   if (imageUrls.isEmpty) return Future.value();
@@ -21,6 +22,7 @@ Future<void> showImageGallery(
       return ImageGalleryViewer(
         imageUrls: imageUrls,
         initialIndex: index,
+        framedPreview: framedPreview,
         onSaveIndex: onSaveIndex,
       );
     },
@@ -30,12 +32,14 @@ Future<void> showImageGallery(
 class ImageGalleryViewer extends StatefulWidget {
   final List<String> imageUrls;
   final int initialIndex;
+  final bool framedPreview;
   final Future<void> Function(int index) onSaveIndex;
 
   const ImageGalleryViewer({
     super.key,
     required this.imageUrls,
     required this.initialIndex,
+    this.framedPreview = true,
     required this.onSaveIndex,
   });
 
@@ -106,10 +110,10 @@ class _ImageGalleryViewerState extends State<ImageGalleryViewer> {
                     itemBuilder: (_, i) {
                       return InteractiveViewer(
                         child: Center(
-                          child: RetryableNetworkImage(
+                          child: FramedNetworkImage(
                             imageUrl: widget.imageUrls[i],
+                            showFrame: widget.framedPreview,
                             fit: BoxFit.contain,
-                            darkErrorStyle: true,
                           ),
                         ),
                       );
