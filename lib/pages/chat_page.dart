@@ -8,6 +8,7 @@ import '../providers/character_provider.dart';
 import '../providers/settings_provider.dart';
 import '../models/character.dart';
 import '../models/chat_message.dart';
+import '../widgets/image_gallery_viewer.dart';
 import '../widgets/sticker_widgets.dart';
 import '../utils/gallery_saver.dart';
 import 'settings_page.dart';
@@ -29,8 +30,8 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final _inputController = TextEditingController();
+  final _inputFocus = FocusNode();
   final _scrollController = ScrollController();
-  bool _savingImage = false;
 
   @override
   void initState() {
@@ -44,11 +45,18 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     _inputController.dispose();
+    _inputFocus.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
+  void _dismissKeyboard() {
+    _inputFocus.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
   void _sendMessage() {
+    _dismissKeyboard();
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
 
@@ -72,7 +80,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _saveImage(String imageUrl) async {
-    setState(() => _savingImage = true);
+    _dismissKeyboard();
     try {
       final settings = context.read<SettingsProvider>();
       final fullUrl = imageUrl.startsWith('http')
@@ -85,7 +93,10 @@ class _ChatPageState extends State<ChatPage> {
       );
       final bytes = Uint8List.fromList(response.data);
 
-      await saveImageBytesToGallery(bytes, name: 'roleplay_${DateTime.now().millisecondsSinceEpoch}');
+      await saveImageBytesToGallery(
+        bytes,
+        name: 'roleplay_${DateTime.now().millisecondsSinceEpoch}',
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -99,109 +110,115 @@ class _ChatPageState extends State<ChatPage> {
         );
       }
     }
-    setState(() => _savingImage = false);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.shell,
-      drawer: _buildLeftDrawer(context),
-      endDrawer: _buildRightDrawer(context),
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Text(widget.character.avatar),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                widget.character.name,
-                overflow: TextOverflow.ellipsis,
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _dismissKeyboard,
+      child: Scaffold(
+        backgroundColor: AppTheme.shell,
+        drawer: _buildLeftDrawer(context),
+        endDrawer: _buildRightDrawer(context),
+        appBar: AppBar(
+          title: Row(
+            children: [
+              Text(widget.character.avatar),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  widget.character.name,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+            ],
+          ),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              if (widget.onBackToList != null) {
+                widget.onBackToList!();
+              } else {
+                Navigator.pop(context);
+              }
+            },
+          ),
+          actions: [
+            Builder(
+              builder: (ctx) => IconButton(
+                tooltip: '连接信息',
+                icon: const Icon(Icons.tune),
+                onPressed: () => Scaffold.of(ctx).openEndDrawer(),
+              ),
+            ),
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'clear') {
+                  context.read<CharacterProvider>().clearMessages();
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'clear', child: Text('清空对话')),
+              ],
             ),
           ],
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (widget.onBackToList != null) {
-              widget.onBackToList!();
-            } else {
-              Navigator.pop(context);
-            }
-          },
-        ),
-        actions: [
-          Builder(
-            builder: (ctx) => IconButton(
-              tooltip: '连接信息',
-              icon: const Icon(Icons.tune),
-              onPressed: () => Scaffold.of(ctx).openEndDrawer(),
-            ),
-          ),
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              if (value == 'clear') {
-                context.read<CharacterProvider>().clearMessages();
-              }
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'clear', child: Text('清空对话')),
-            ],
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Consumer<CharacterProvider>(
-              builder: (_, provider, __) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _scrollToBottom();
-                });
+        body: Column(
+          children: [
+            Expanded(
+              child: Consumer<CharacterProvider>(
+                builder: (_, provider, __) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _scrollToBottom();
+                  });
 
-                if (provider.messages.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          widget.character.avatar,
-                          style: const TextStyle(fontSize: 64),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          '和${widget.character.name}打个招呼吧~',
-                          style: const TextStyle(color: AppTheme.text2),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          '左滑菜单看角色 · 右上角看连接',
-                          style: TextStyle(color: AppTheme.textMute, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: provider.messages.length,
-                  itemBuilder: (_, i) {
-                    final msg = provider.messages[i];
-                    return _MessageBubble(
-                      message: msg,
-                      character: widget.character,
-                      onSaveImage: _saveImage,
+                  if (provider.messages.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            widget.character.avatar,
+                            style: const TextStyle(fontSize: 64),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '和${widget.character.name}打个招呼吧~',
+                            style: const TextStyle(color: AppTheme.text2),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            '左滑菜单看角色 · 右上角看连接',
+                            style: TextStyle(
+                              color: AppTheme.textMute,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     );
-                  },
-                );
-              },
+                  }
+
+                  return ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(12),
+                    itemCount: provider.messages.length,
+                    itemBuilder: (_, i) {
+                      final msg = provider.messages[i];
+                      return _MessageBubble(
+                        message: msg,
+                        character: widget.character,
+                        onSaveImage: _saveImage,
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-          ),
-          _buildInputBar(),
-        ],
+            _buildInputBar(),
+          ],
+        ),
       ),
     );
   }
@@ -314,6 +331,7 @@ class _ChatPageState extends State<ChatPage> {
             Expanded(
               child: StickerInput(
                 controller: _inputController,
+                focusNode: _inputFocus,
                 hintText: '说点什么...',
                 maxLines: 4,
                 textInputAction: TextInputAction.newline,
@@ -482,34 +500,11 @@ class _MessageBubble extends StatelessWidget {
   }
 
   void _showImageDialog(BuildContext context, String fullUrl) {
-    showDialog(
-      context: context,
-      builder: (_) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: InteractiveViewer(
-                child: CachedNetworkImage(
-                  imageUrl: fullUrl,
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            StickerButton(
-              text: '保存到手机',
-              icon: Icons.save_alt,
-              onPressed: () {
-                Navigator.pop(context);
-                onSaveImage(message.imageUrl!);
-              },
-            ),
-          ],
-        ),
-      ),
+    FocusManager.instance.primaryFocus?.unfocus();
+    showImageGallery(
+      context,
+      imageUrls: [fullUrl],
+      onSaveIndex: (_) => onSaveImage(message.imageUrl!),
     );
   }
 }

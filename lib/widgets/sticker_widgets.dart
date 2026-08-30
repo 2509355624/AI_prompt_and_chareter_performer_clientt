@@ -121,6 +121,7 @@ class StickerButton extends StatelessWidget {
 class StickerInput extends StatelessWidget {
   final String? hintText;
   final TextEditingController? controller;
+  final FocusNode? focusNode;
   final int maxLines;
   final int? maxLength;
   final TextInputAction textInputAction;
@@ -132,6 +133,7 @@ class StickerInput extends StatelessWidget {
     super.key,
     this.hintText,
     this.controller,
+    this.focusNode,
     this.maxLines = 1,
     this.maxLength,
     this.textInputAction = TextInputAction.done,
@@ -144,6 +146,7 @@ class StickerInput extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       maxLines: maxLines,
       maxLength: maxLength,
       textInputAction: textInputAction,
