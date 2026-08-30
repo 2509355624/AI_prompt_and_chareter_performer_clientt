@@ -178,15 +178,11 @@ class ApiService {
     return Map<String, dynamic>.from(response.data);
   }
 
-  /// 发起一轮对话（SSE 流式）
+  /// 发起一轮对话（SSE 流式）。密钥由服务端 .env 解析，客户端不传。
   Stream<Map<String, dynamic>> chatTurnStream({
     required String characterId,
     required List<Map<String, dynamic>> messages,
     required String systemPrompt,
-    String provider = 'deepseek',
-    String apiKey = '',
-    String baseUrl = '',
-    String model = '',
     String conversationSummary = '',
     String appearancePrompt = '',
     String outfitPrompt = '',
@@ -196,15 +192,11 @@ class ApiService {
 
     () async {
       try {
-        // 第一步：创建 chat-turn
+        // 第一步：创建 chat-turn（provider/model/key 走服务端默认）
         final createResp = await _dio.post('/api/chat-turn', data: {
           'characterId': characterId,
           'messages': messages,
           'systemPrompt': systemPrompt,
-          'provider': provider,
-          'apiKey': apiKey,
-          'baseUrl': baseUrl,
-          'model': model,
           'conversationSummary': conversationSummary,
           'appearancePrompt': appearancePrompt,
           'outfitPrompt': outfitPrompt,

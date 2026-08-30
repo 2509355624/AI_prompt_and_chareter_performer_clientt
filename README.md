@@ -1,16 +1,22 @@
-# console_ui_master_app
+# Console UI Master（Flutter 薄客户端）
 
-A new Flutter project.
+手机端入口，对齐电脑上的「AI 工具中心」。
 
-## Getting Started
+## 架构
 
-This project is a starting point for a Flutter application.
+- **电脑 Node**（`picture_prompt_produce`）：密钥、模型、Comfy、情绪对话全在服务端 `.env`
+- **本 App**：只保存局域网地址（如 `http://192.168.0.128:3000`），调 REST / SSE，**不存 API Key**
 
-A few resources to get you started if this is your first Flutter project:
+## 使用
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+1. 电脑启动 Node：`npm start`（默认端口 3000）
+2. 手机与电脑同一 Wi‑Fi
+3. App 右上角设置填：`http://你的电脑IPv4:3000` → 测试并保存
+4. 首页点「角色扮演」或「ComfyUI 图片生成」
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 开发
+
+```bash
+flutter pub get
+flutter run
+```

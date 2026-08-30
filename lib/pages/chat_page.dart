@@ -10,12 +10,18 @@ import '../providers/settings_provider.dart';
 import '../models/character.dart';
 import '../models/chat_message.dart';
 import '../widgets/sticker_widgets.dart';
+import 'settings_page.dart';
 
-/// 对话页
+/// 对话页：中间聊天；左抽屉角色信息；右抽屉连接状态（无密钥）。
 class ChatPage extends StatefulWidget {
   final Character character;
+  final VoidCallback? onBackToList;
 
-  const ChatPage({super.key, required this.character});
+  const ChatPage({
+    super.key,
+    required this.character,
+    this.onBackToList,
+  });
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -46,16 +52,8 @@ class _ChatPageState extends State<ChatPage> {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
 
-    final settings = context.read<SettingsProvider>();
     final provider = context.read<CharacterProvider>();
-
-    provider.sendMessage(
-      text,
-      provider: settings.aiProvider,
-      apiKey: settings.apiKey,
-      baseUrl: settings.aiBaseUrl,
-      model: settings.aiModel,
-    );
+    provider.sendMessage(text);
 
     _inputController.clear();
     _scrollToBottom();
@@ -108,19 +106,39 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.shell,
+      drawer: _buildLeftDrawer(context),
+      endDrawer: _buildRightDrawer(context),
       appBar: AppBar(
         title: Row(
           children: [
             Text(widget.character.avatar),
             const SizedBox(width: 8),
-            Text(widget.character.name),
+            Flexible(
+              child: Text(
+                widget.character.name,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (widget.onBackToList != null) {
+              widget.onBackToList!();
+            } else {
+              Navigator.pop(context);
+            }
+          },
         ),
         actions: [
+          Builder(
+            builder: (ctx) => IconButton(
+              tooltip: '连接信息',
+              icon: const Icon(Icons.tune),
+              onPressed: () => Scaffold.of(ctx).openEndDrawer(),
+            ),
+          ),
           PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'clear') {
@@ -135,7 +153,6 @@ class _ChatPageState extends State<ChatPage> {
       ),
       body: Column(
         children: [
-          // 消息列表
           Expanded(
             child: Consumer<CharacterProvider>(
               builder: (_, provider, __) {
@@ -156,6 +173,11 @@ class _ChatPageState extends State<ChatPage> {
                         Text(
                           '和${widget.character.name}打个招呼吧~',
                           style: const TextStyle(color: AppTheme.text2),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          '左滑菜单看角色 · 右上角看连接',
+                          style: TextStyle(color: AppTheme.textMute, fontSize: 12),
                         ),
                       ],
                     ),
@@ -178,9 +200,100 @@ class _ChatPageState extends State<ChatPage> {
               },
             ),
           ),
-          // 输入栏
           _buildInputBar(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLeftDrawer(BuildContext context) {
+    return Drawer(
+      backgroundColor: AppTheme.shell,
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text('角色', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            StickerCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(widget.character.avatar, style: const TextStyle(fontSize: 40)),
+                  const SizedBox(height: 8),
+                  Text(widget.character.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.character.description.isEmpty ? '暂无简介' : widget.character.description,
+                    style: const TextStyle(color: AppTheme.text2, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            StickerButton(
+              text: '返回角色列表',
+              icon: Icons.people_outline,
+              isPrimary: false,
+              onPressed: () {
+                Navigator.pop(context);
+                if (widget.onBackToList != null) {
+                  widget.onBackToList!();
+                } else {
+                  Navigator.pop(context);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRightDrawer(BuildContext context) {
+    return Drawer(
+      backgroundColor: AppTheme.shell,
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text('连接 / 说明', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Consumer<SettingsProvider>(
+              builder: (_, s, __) => StickerCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('服务器', style: TextStyle(color: AppTheme.text2, fontSize: 12)),
+                    const SizedBox(height: 4),
+                    Text(s.serverUrl.isEmpty ? '未配置' : s.serverUrl),
+                    const SizedBox(height: 8),
+                    s.isConnected
+                        ? StatusBadge.ok('已连接')
+                        : StatusBadge.error('未连接'),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'API Key、模型、Comfy 地址都在电脑服务端 .env，手机只调接口。',
+                      style: TextStyle(fontSize: 12, color: AppTheme.text2, height: 1.4),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            StickerButton(
+              text: '打开设置',
+              icon: Icons.settings_outlined,
+              isPrimary: false,
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsPage()),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

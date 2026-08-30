@@ -2,75 +2,71 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 
-/// 设置 Provider：管理服务器地址、API Key 等配置
+/// 仅管理「连哪台电脑上的 Node」。密钥全部在服务端 .env。
 class SettingsProvider extends ChangeNotifier {
   final ApiService _api;
+
+  static const defaultServerUrl = 'http://192.168.0.128:3000';
+
   String _serverUrl = '';
-  String _apiKey = '';
-  String _aiProvider = 'deepseek';
-  String _aiModel = '';
-  String _aiBaseUrl = '';
   bool _isConnected = false;
+  bool _loaded = false;
 
   SettingsProvider(this._api);
 
   String get serverUrl => _serverUrl;
-  String get apiKey => _apiKey;
-  String get aiProvider => _aiProvider;
-  String get aiModel => _aiModel;
-  String get aiBaseUrl => _aiBaseUrl;
   bool get isConnected => _isConnected;
+  bool get loaded => _loaded;
+  bool get hasServerUrl => _serverUrl.trim().isNotEmpty;
 
   Future<void> loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    _serverUrl = prefs.getString('server_url') ?? 'http://192.168.1.100:3000';
-    _apiKey = prefs.getString('api_key') ?? '';
-    _aiProvider = prefs.getString('ai_provider') ?? 'deepseek';
-    _aiModel = prefs.getString('ai_model') ?? '';
-    _aiBaseUrl = prefs.getString('ai_base_url') ?? '';
+    // 清掉豆包那版误存在手机里的密钥
+    await prefs.remove('api_key');
+    await prefs.remove('ai_provider');
+    await prefs.remove('ai_model');
+    await prefs.remove('ai_base_url');
 
+    _serverUrl = prefs.getString('server_url') ?? defaultServerUrl;
     if (_serverUrl.isNotEmpty) {
       _api.setBaseUrl(_serverUrl);
-      // 尝试连接
       _isConnected = await _api.checkConnection();
     }
+    _loaded = true;
     notifyListeners();
   }
 
   Future<void> setServerUrl(String url) async {
-    _serverUrl = url;
-    _api.setBaseUrl(url);
+    final normalized = url.trim().replaceAll(RegExp(r'/+$'), '');
+    _serverUrl = normalized;
+    _api.setBaseUrl(normalized);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('server_url', url);
+    await prefs.setString('server_url', normalized);
     _isConnected = await _api.checkConnection();
     notifyListeners();
   }
 
-  Future<void> setAiConfig({
-    required String provider,
-    required String apiKey,
-    required String model,
-    required String baseUrl,
-  }) async {
-    _aiProvider = provider;
-    _apiKey = apiKey;
-    _aiModel = model;
-    _aiBaseUrl = baseUrl;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('ai_provider', provider);
-    await prefs.setString('api_key', apiKey);
-    await prefs.setString('ai_model', model);
-    await prefs.setString('ai_base_url', baseUrl);
-    notifyListeners();
-  }
-
-  Future<bool> testConnection(String url) async {
-    final oldUrl = _serverUrl;
-    _api.setBaseUrl(url);
+  Future<bool> testAndSave(String url) async {
+    final normalized = url.trim().replaceAll(RegExp(r'/+$'), '');
+    final old = _serverUrl;
+    _api.setBaseUrl(normalized);
     final ok = await _api.checkConnection();
     if (!ok) {
-      _api.setBaseUrl(oldUrl);
+      if (old.isNotEmpty) _api.setBaseUrl(old);
+      return false;
     }
-    return ok;
+    await setServerUrl(normalized);
+    return true;
+  }
+
+  Future<void> refreshConnection() async {
+    if (_serverUrl.isEmpty) {
+      _isConnected = false;
+      notifyListeners();
+      return;
+    }
+    _api.setBaseUrl(_serverUrl);
+    _isConnected = await _api.checkConnection();
+    notifyListeners();
   }
 }

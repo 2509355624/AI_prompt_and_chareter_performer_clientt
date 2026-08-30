@@ -2,84 +2,130 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import '../providers/settings_provider.dart';
-import '../models/character.dart';
-import 'generate_page.dart';
+import '../widgets/sticker_widgets.dart';
 import 'character_list_page.dart';
 import 'chat_page.dart';
+import 'generate_page.dart';
 import 'settings_page.dart';
+import '../models/character.dart';
 
-/// 首页 - 底部 Tab 导航
-class HomePage extends StatefulWidget {
+/// 工具中心首页：竖排卡片，对齐 Web 端入口。
+class HomePage extends StatelessWidget {
   const HomePage({super.key});
-
-  @override
-  State<HomePage> createState() => _HomePageState();
-}
-
-class _HomePageState extends State<HomePage> {
-  int _currentIndex = 0;
-
-  final List<Widget> _pages = [
-    const GeneratePage(),
-    const _CharacterEntry(),
-    const SettingsPage(),
-  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_currentIndex],
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: AppTheme.card,
-          border: const Border(
-            top: BorderSide(color: AppTheme.textColor, width: 2),
+      backgroundColor: AppTheme.shell,
+      appBar: AppBar(
+        title: const Text('✨ AI 工具中心'),
+        actions: [
+          IconButton(
+            tooltip: '服务器设置',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SettingsPage()),
+              );
+            },
           ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildNavItem(0, Icons.auto_awesome, '生成'),
-                _buildNavItem(1, Icons.face_outlined, '角色'),
-                _buildNavItem(2, Icons.settings_outlined, '设置'),
-              ],
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          Consumer<SettingsProvider>(
+            builder: (_, s, __) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: s.isConnected
+                  ? StatusBadge.ok('已连接 ${s.serverUrl}')
+                  : StatusBadge.error('未连接 · 点右上角设置填局域网地址'),
             ),
           ),
-        ),
+          const Text(
+            '贴纸手帐风入口 · 选一个工具开始',
+            style: TextStyle(color: AppTheme.text2, fontSize: 13),
+          ),
+          const SizedBox(height: 14),
+          _ToolCard(
+            emoji: '🎭',
+            title: 'AI 角色扮演',
+            desc: '自定义角色对白与出图，沉浸式聊天联动分镜。',
+            tilt: -0.5,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const _RoleplayFlow()),
+              );
+            },
+          ),
+          const SizedBox(height: 14),
+          _ToolCard(
+            emoji: '✨',
+            title: 'ComfyUI 图片生成',
+            desc: '角色预设批量出图，AI 扩写，默认贴纸边框预览导出。',
+            tilt: 0.4,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const GeneratePage()),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
+}
 
-  Widget _buildNavItem(int index, IconData icon, String label) {
-    final selected = _currentIndex == index;
-    return GestureDetector(
-      onTap: () => setState(() => _currentIndex = index),
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? AppTheme.accentSoft : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-        ),
+class _ToolCard extends StatelessWidget {
+  final String emoji;
+  final String title;
+  final String desc;
+  final double tilt;
+  final VoidCallback onTap;
+
+  const _ToolCard({
+    required this.emoji,
+    required this.title,
+    required this.desc,
+    required this.tilt,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+      angle: tilt * 0.0174533,
+      child: StickerCard(
+        onTap: onTap,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              icon,
-              color: selected ? AppTheme.accent : AppTheme.textMute,
-              size: 24,
+            Row(
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 28)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const Text(
+                  '打开 →',
+                  style: TextStyle(
+                    color: AppTheme.accent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 8),
             Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                color: selected ? AppTheme.accent : AppTheme.textMute,
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              ),
+              desc,
+              style: const TextStyle(color: AppTheme.text2, fontSize: 13, height: 1.4),
             ),
           ],
         ),
@@ -88,29 +134,27 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-/// 角色入口 - 先显示列表，选中后进入对话页
-class _CharacterEntry extends StatefulWidget {
-  const _CharacterEntry();
+/// 角色列表 → 聊天
+class _RoleplayFlow extends StatefulWidget {
+  const _RoleplayFlow();
 
   @override
-  State<_CharacterEntry> createState() => _CharacterEntryState();
+  State<_RoleplayFlow> createState() => _RoleplayFlowState();
 }
 
-class _CharacterEntryState extends State<_CharacterEntry> {
-  Character? _selectedCharacter;
+class _RoleplayFlowState extends State<_RoleplayFlow> {
+  Character? _selected;
 
   @override
   Widget build(BuildContext context) {
-    if (_selectedCharacter != null) {
+    if (_selected != null) {
       return ChatPage(
-        character: _selectedCharacter!,
+        character: _selected!,
+        onBackToList: () => setState(() => _selected = null),
       );
     }
-
     return CharacterListPage(
-      onCharacterSelected: (char) {
-        setState(() => _selectedCharacter = char);
-      },
+      onCharacterSelected: (c) => setState(() => _selected = c),
     );
   }
 }

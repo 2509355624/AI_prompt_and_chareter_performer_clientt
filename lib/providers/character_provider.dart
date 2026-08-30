@@ -69,12 +69,7 @@ class CharacterProvider extends ChangeNotifier {
   //  发送消息
   // ============================================================
 
-  Future<void> sendMessage(String text, {
-    required String provider,
-    required String apiKey,
-    required String baseUrl,
-    required String model,
-  }) async {
+  Future<void> sendMessage(String text) async {
     if (_currentCharacter == null || _isSending || text.trim().isEmpty) return;
 
     _isSending = true;
@@ -110,15 +105,11 @@ class CharacterProvider extends ChangeNotifier {
               })
           .toList();
 
-      // 发起对话流式请求
+      // 发起对话流式请求（密钥在服务端）
       final stream = _api.chatTurnStream(
         characterId: _currentCharacter!.id,
         messages: msgsForApi,
         systemPrompt: _currentCharacter!.systemPrompt,
-        provider: provider,
-        apiKey: apiKey,
-        baseUrl: baseUrl,
-        model: model,
         appearancePrompt: _currentCharacter!.appearancePrompt,
         outfitPrompt: _currentCharacter!.outfitPrompt,
       );

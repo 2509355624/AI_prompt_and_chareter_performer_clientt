@@ -38,10 +38,13 @@ class MyApp extends StatelessWidget {
         theme: AppTheme.lightTheme,
         home: Consumer<SettingsProvider>(
           builder: (_, settings, __) {
-            // 如果没配置过服务器，先跳设置页
-            if (!settings.isConnected && settings.serverUrl.isEmpty) {
-              return const SettingsPage();
+            if (!settings.loaded) {
+              return const Scaffold(
+                backgroundColor: Color(0xFFE8DFCF),
+                body: Center(child: CircularProgressIndicator()),
+              );
             }
+            // 默认有局域网地址时直接进工具中心；未连上也能进，右上角设置可改
             return const HomePage();
           },
         ),

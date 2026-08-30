@@ -44,3 +44,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 /android/build/
+
+# Secrets (never commit)
+.env
+.env.*
+*.pem
+*.p12
+credentials.json
+
