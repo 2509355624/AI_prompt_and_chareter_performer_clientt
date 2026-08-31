@@ -123,8 +123,10 @@ class StickerInput extends StatelessWidget {
   final TextEditingController? controller;
   final FocusNode? focusNode;
   final int maxLines;
+  final int? minLines;
   final int? maxLength;
   final TextInputAction textInputAction;
+  final TextInputType? keyboardType;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
   final bool obscureText;
@@ -135,8 +137,10 @@ class StickerInput extends StatelessWidget {
     this.controller,
     this.focusNode,
     this.maxLines = 1,
+    this.minLines,
     this.maxLength,
     this.textInputAction = TextInputAction.done,
+    this.keyboardType,
     this.onChanged,
     this.onSubmitted,
     this.obscureText = false,
@@ -147,9 +151,11 @@ class StickerInput extends StatelessWidget {
     return TextField(
       controller: controller,
       focusNode: focusNode,
+      minLines: minLines,
       maxLines: maxLines,
       maxLength: maxLength,
       textInputAction: textInputAction,
+      keyboardType: keyboardType,
       onChanged: onChanged,
       onSubmitted: onSubmitted,
       obscureText: obscureText,

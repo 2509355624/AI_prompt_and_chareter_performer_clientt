@@ -237,279 +237,281 @@ class _GenerateConfigSheetState extends State<GenerateConfigSheet> {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewInsetsOf(context).bottom;
     final height = MediaQuery.sizeOf(context).height * 0.92;
+    // 不用整页 Consumer：draft 每次推送都会重建整表，滑动会卡。
+    final gen = context.read<GenerateProvider>();
+    final draft = gen.draft;
+    final isKrea2 = draft?.isKrea2 == true ||
+        _checkpoint.toLowerCase().endsWith('.gguf');
+    final checkpoints = _ensureOption(gen.checkpoints, _checkpoint);
+    final samplers = _ensureOption(gen.samplerOptions, _sampler);
+    final schedulers = _ensureOption(gen.schedulerOptions, _scheduler);
+    final ups = _ensureOption(gen.upscaleModels, _upscaleModel);
+    final loraOpts = ['(none)', ...gen.loraNames];
 
-    return Consumer<GenerateProvider>(
-      builder: (context, gen, _) {
-        final draft = gen.draft;
-        final isKrea2 = draft?.isKrea2 == true ||
-            _checkpoint.toLowerCase().endsWith('.gguf');
-        final checkpoints = _ensureOption(gen.checkpoints, _checkpoint);
-        final samplers = _ensureOption(gen.samplerOptions, _sampler);
-        final schedulers = _ensureOption(gen.schedulerOptions, _scheduler);
-        final ups = _ensureOption(gen.upscaleModels, _upscaleModel);
-        final loraOpts = ['(none)', ...gen.loraNames];
-
-        return Padding(
-          padding: EdgeInsets.only(bottom: bottom),
-          child: SizedBox(
-            height: height,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-                  child: Row(
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottom),
+      child: SizedBox(
+        height: height,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '预设配置',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      gen.createBlankPreset();
+                      _hydrateFromProvider();
+                    },
+                    child: const Text('新建'),
+                  ),
+                  IconButton(
+                    onPressed: () {
+                      _pushDraft();
+                      Navigator.pop(context);
+                    },
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppTheme.rule),
+            Expanded(
+              child: ListView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                children: [
+                  _label('预设名称'),
+                  _field(_name, onChanged: (_) => _pushDraft()),
+                  const SizedBox(height: 12),
+                  _longTextBlock(
+                    label: '底模 basePrompt（角色特征）',
+                    controller: _basePrompt,
+                    hint: '点击「编辑」修改长文本，避免滑动误触',
+                    maxLines: 10,
+                  ),
+                  const SizedBox(height: 16),
+                  _sectionTitle('AI 扩写提示词'),
+                  const Text(
+                    '仅「AI 扩写」模式使用；手动 Prompt 不走这里。',
+                    style: TextStyle(fontSize: 12, color: AppTheme.text2),
+                  ),
+                  const SizedBox(height: 8),
+                  _longTextBlock(
+                    label: 'System',
+                    controller: _aiSystem,
+                    hint: '点击「编辑」打开编辑窗口',
+                    maxLines: 14,
+                    pushDraftOnSave: false,
+                  ),
+                  const SizedBox(height: 8),
+                  _longTextBlock(
+                    label: 'User 模板（可用 {scene} {count}）',
+                    controller: _aiUser,
+                    hint: '点击「编辑」打开编辑窗口',
+                    maxLines: 8,
+                    pushDraftOnSave: false,
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: StickerButton(
+                      text: '保存 AI 提示词',
+                      icon: Icons.save_outlined,
+                      fontSize: 12,
+                      onPressed: _saveAi,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _label(isKrea2 ? 'Unet (GGUF)' : 'Checkpoint'),
+                  _dropdown(
+                    value: checkpoints.contains(_checkpoint)
+                        ? _checkpoint
+                        : (checkpoints.isEmpty ? null : checkpoints.first),
+                    items: checkpoints,
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setState(() => _checkpoint = v);
+                      _pushDraft();
+                    },
+                  ),
+                  if (isKrea2) ...[
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Krea2：对照 Unet / 尺寸 / KSampler / LoRA1；可勾选 2× 放大。无高清修复、无 LoRA2/3。',
+                      style: TextStyle(fontSize: 12, color: AppTheme.text2),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
                     children: [
-                      const Expanded(
-                        child: Text(
-                          '预设配置',
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                          ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _label('宽'),
+                            _field(
+                              _width,
+                              keyboard: TextInputType.number,
+                              onChanged: (_) => _pushDraft(),
+                            ),
+                          ],
                         ),
                       ),
-                      TextButton(
-                        onPressed: () {
-                          gen.createBlankPreset();
-                          _hydrateFromProvider();
-                        },
-                        child: const Text('新建'),
-                      ),
-                      IconButton(
-                        onPressed: () {
-                          _pushDraft();
-                          Navigator.pop(context);
-                        },
-                        icon: const Icon(Icons.close),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _label('高'),
+                            _field(
+                              _height,
+                              keyboard: TextInputType.number,
+                              onChanged: (_) => _pushDraft(),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-                const Divider(height: 1, color: AppTheme.rule),
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                  const SizedBox(height: 12),
+                  Row(
                     children: [
-                      _label('预设名称'),
-                      _field(_name, onChanged: (_) => _pushDraft()),
-                      const SizedBox(height: 12),
-                      _longTextBlock(
-                        label: '底模 basePrompt（角色特征）',
-                        controller: _basePrompt,
-                        hint: '点击「编辑」修改长文本，避免滑动误触',
-                        maxLines: 10,
-                      ),
-                      const SizedBox(height: 16),
-                      _sectionTitle('AI 扩写提示词'),
-                      const Text(
-                        '仅「AI 扩写」模式使用；手动 Prompt 不走这里。',
-                        style: TextStyle(fontSize: 12, color: AppTheme.text2),
-                      ),
-                      const SizedBox(height: 8),
-                      _longTextBlock(
-                        label: 'System',
-                        controller: _aiSystem,
-                        hint: '点击「编辑」打开编辑窗口',
-                        maxLines: 14,
-                        pushDraftOnSave: false,
-                      ),
-                      const SizedBox(height: 8),
-                      _longTextBlock(
-                        label: 'User 模板（可用 {scene} {count}）',
-                        controller: _aiUser,
-                        hint: '点击「编辑」打开编辑窗口',
-                        maxLines: 8,
-                        pushDraftOnSave: false,
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: StickerButton(
-                          text: '保存 AI 提示词',
-                          icon: Icons.save_outlined,
-                          fontSize: 12,
-                          onPressed: _saveAi,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      _label(isKrea2 ? 'Unet (GGUF)' : 'Checkpoint'),
-                      _dropdown(
-                        value: checkpoints.contains(_checkpoint)
-                            ? _checkpoint
-                            : (checkpoints.isEmpty ? null : checkpoints.first),
-                        items: checkpoints,
-                        onChanged: (v) {
-                          if (v == null) return;
-                          setState(() => _checkpoint = v);
-                          _pushDraft();
-                        },
-                      ),
-                      if (isKrea2) ...[
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Krea2：对照 Unet / 尺寸 / KSampler / LoRA1；可勾选 2× 放大。无高清修复、无 LoRA2/3。',
-                          style:
-                              TextStyle(fontSize: 12, color: AppTheme.text2),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('宽'),
-                                _field(
-                                  _width,
-                                  keyboard: TextInputType.number,
-                                  onChanged: (_) => _pushDraft(),
-                                ),
-                              ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _label('Steps'),
+                            _field(
+                              _steps,
+                              keyboard: TextInputType.number,
+                              onChanged: (_) => _pushDraft(),
                             ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('高'),
-                                _field(
-                                  _height,
-                                  keyboard: TextInputType.number,
-                                  onChanged: (_) => _pushDraft(),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('Steps'),
-                                _field(
-                                  _steps,
-                                  keyboard: TextInputType.number,
-                                  onChanged: (_) => _pushDraft(),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('CFG'),
-                                _field(
-                                  _cfg,
-                                  keyboard:
-                                      const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                                  onChanged: (_) => _pushDraft(),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      _label('Sampler'),
-                      _dropdown(
-                        value: samplers.contains(_sampler)
-                            ? _sampler
-                            : samplers.first,
-                        items: samplers,
-                        onChanged: (v) {
-                          if (v == null) return;
-                          setState(() => _sampler = v);
-                          _pushDraft();
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      _label('Scheduler'),
-                      _dropdown(
-                        value: schedulers.contains(_scheduler)
-                            ? _scheduler
-                            : schedulers.first,
-                        items: schedulers,
-                        onChanged: (v) {
-                          if (v == null) return;
-                          setState(() => _scheduler = v);
-                          _pushDraft();
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      _longTextBlock(
-                        label: 'Negative',
-                        controller: _negative,
-                        hint: '点击「编辑」修改负向提示词',
-                        maxLines: 8,
-                      ),
-                      if (!isKrea2) ...[
-                        const SizedBox(height: 12),
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('高清修复', style: TextStyle(fontSize: 14)),
-                          value: _enableHires,
-                          activeColor: AppTheme.accent,
-                          onChanged: (v) {
-                            setState(() => _enableHires = v);
-                            _pushDraft();
-                          },
+                          ],
                         ),
-                      ],
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('2× 放大', style: TextStyle(fontSize: 14)),
-                        subtitle: const Text(
-                          '勾选后点生成即生效，不必先保存预设',
-                          style: TextStyle(fontSize: 12, color: AppTheme.text2),
-                        ),
-                        value: _enableUpscale,
-                        activeColor: AppTheme.accent,
-                        onChanged: (v) {
-                          setState(() => _enableUpscale = v);
-                          _pushDraft();
-                        },
                       ),
-                      if (_enableUpscale && ups.isNotEmpty) ...[
-                        _label('放大模型'),
-                        _dropdown(
-                          value: ups.contains(_upscaleModel)
-                              ? _upscaleModel
-                              : ups.first,
-                          items: ups,
-                          onChanged: (v) {
-                            if (v == null) return;
-                            setState(() => _upscaleModel = v);
-                            _pushDraft();
-                          },
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _label('CFG'),
+                            _field(
+                              _cfg,
+                              keyboard: const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                              onChanged: (_) => _pushDraft(),
+                            ),
+                          ],
                         ),
-                      ],
-                      const SizedBox(height: 8),
-                      _sectionTitle('LoRA'),
-                      _loraRow(0, loraOpts),
-                      if (!isKrea2) ...[
-                        _loraRow(1, loraOpts),
-                        _loraRow(2, loraOpts),
-                      ],
-                      const SizedBox(height: 20),
-                      Row(
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _label('Sampler'),
+                  _dropdown(
+                    value: samplers.contains(_sampler)
+                        ? _sampler
+                        : samplers.first,
+                    items: samplers,
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setState(() => _sampler = v);
+                      _pushDraft();
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _label('Scheduler'),
+                  _dropdown(
+                    value: schedulers.contains(_scheduler)
+                        ? _scheduler
+                        : schedulers.first,
+                    items: schedulers,
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setState(() => _scheduler = v);
+                      _pushDraft();
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _longTextBlock(
+                    label: 'Negative',
+                    controller: _negative,
+                    hint: '点击「编辑」修改负向提示词',
+                    maxLines: 8,
+                  ),
+                  if (!isKrea2) ...[
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title:
+                          const Text('高清修复', style: TextStyle(fontSize: 14)),
+                      value: _enableHires,
+                      activeColor: AppTheme.accent,
+                      onChanged: (v) {
+                        setState(() => _enableHires = v);
+                        _pushDraft();
+                      },
+                    ),
+                  ],
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('2× 放大', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text(
+                      '勾选后点生成即生效，不必先保存预设',
+                      style: TextStyle(fontSize: 12, color: AppTheme.text2),
+                    ),
+                    value: _enableUpscale,
+                    activeColor: AppTheme.accent,
+                    onChanged: (v) {
+                      setState(() => _enableUpscale = v);
+                      _pushDraft();
+                    },
+                  ),
+                  if (_enableUpscale && ups.isNotEmpty) ...[
+                    _label('放大模型'),
+                    _dropdown(
+                      value: ups.contains(_upscaleModel)
+                          ? _upscaleModel
+                          : ups.first,
+                      items: ups,
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() => _upscaleModel = v);
+                        _pushDraft();
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  _sectionTitle('LoRA'),
+                  _loraRow(0, loraOpts),
+                  if (!isKrea2) ...[
+                    _loraRow(1, loraOpts),
+                    _loraRow(2, loraOpts),
+                  ],
+                  const SizedBox(height: 20),
+                  Selector<GenerateProvider, bool>(
+                    selector: (_, g) => g.savingPreset,
+                    builder: (_, saving, __) {
+                      return Row(
                         children: [
                           Expanded(
                             child: StickerButton(
-                              text: gen.savingPreset ? '保存中…' : '保存预设',
+                              text: saving ? '保存中…' : '保存预设',
                               icon: Icons.save,
-                              isLoading: gen.savingPreset,
-                              onPressed:
-                                  gen.savingPreset ? null : _savePreset,
+                              isLoading: saving,
+                              onPressed: saving ? null : _savePreset,
                             ),
                           ),
                           const SizedBox(width: 10),
@@ -524,20 +526,20 @@ class _GenerateConfigSheetState extends State<GenerateConfigSheet> {
                             ),
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        '改完勾选即可生成；「保存预设」才写入服务器列表。',
-                        style: TextStyle(fontSize: 12, color: AppTheme.textMute),
-                      ),
-                    ],
+                      );
+                    },
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  const Text(
+                    '改完勾选即可生成；「保存预设」才写入服务器列表。',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textMute),
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          ],
+        ),
+      ),
     );
   }
 
@@ -677,54 +679,22 @@ class _GenerateConfigSheetState extends State<GenerateConfigSheet> {
     int maxLines = 8,
     bool pushDraftOnSave = true,
   }) async {
-    final draft = TextEditingController(text: controller.text);
-    final ok = await showDialog<bool>(
+    final result = await showDialog<String>(
       context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: AppTheme.card,
-          title: Text(title, style: const TextStyle(fontSize: 16)),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: TextField(
-              controller: draft,
-              maxLines: maxLines,
-              autofocus: true,
-              style: const TextStyle(fontSize: 14),
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: AppTheme.surface,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                  borderSide:
-                      const BorderSide(color: AppTheme.textColor, width: 2),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                  borderSide:
-                      const BorderSide(color: AppTheme.textColor, width: 2),
-                ),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('完成', style: TextStyle(color: AppTheme.accent)),
-            ),
-          ],
-        );
-      },
+      barrierDismissible: true,
+      builder: (ctx) => _LongTextEditDialog(
+        title: title,
+        initialText: controller.text,
+        maxLines: maxLines,
+      ),
     );
-    if (ok == true) {
-      setState(() => controller.text = draft.text);
-      if (pushDraftOnSave) _pushDraft();
-    }
-    draft.dispose();
+    if (!mounted || result == null) return;
+    setState(() => controller.text = result);
+    if (!pushDraftOnSave) return;
+    // 等弹窗路由拆干净再 notify，避免 _dependents.isEmpty 断言
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _pushDraft();
+    });
   }
 
   Widget _sectionTitle(String text) {
@@ -822,6 +792,79 @@ class _GenerateConfigSheetState extends State<GenerateConfigSheet> {
           borderSide: const BorderSide(color: AppTheme.textColor, width: 2),
         ),
       ),
+    );
+  }
+}
+
+/// Owns its TextEditingController so dispose is safe after the route pops.
+class _LongTextEditDialog extends StatefulWidget {
+  final String title;
+  final String initialText;
+  final int maxLines;
+
+  const _LongTextEditDialog({
+    required this.title,
+    required this.initialText,
+    this.maxLines = 8,
+  });
+
+  @override
+  State<_LongTextEditDialog> createState() => _LongTextEditDialogState();
+}
+
+class _LongTextEditDialogState extends State<_LongTextEditDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.card,
+      title: Text(widget.title, style: const TextStyle(fontSize: 16)),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: TextField(
+          controller: _controller,
+          maxLines: widget.maxLines,
+          autofocus: true,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: AppTheme.surface,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+              borderSide: const BorderSide(color: AppTheme.textColor, width: 2),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+              borderSide: const BorderSide(color: AppTheme.textColor, width: 2),
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: const Text('完成', style: TextStyle(color: AppTheme.accent)),
+        ),
+      ],
     );
   }
 }

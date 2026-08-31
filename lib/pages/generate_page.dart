@@ -34,6 +34,7 @@ class _GeneratePageState extends State<GeneratePage>
   /// 预览默认带小红书边框；保存时可另选原图/边框
   bool _previewWithFrame = true;
   final Set<int> _selected = {};
+  bool _sceneExpanded = false;
 
   @override
   void initState() {
@@ -860,14 +861,28 @@ class _GeneratePageState extends State<GeneratePage>
                     controller: _sceneController,
                     focusNode: _sceneFocus,
                     hintText: _mode == 'ai'
-                        ? '输入场景描述…（最多 $maxCount 张）'
+                        ? '输入场景描述…（最多 $maxCount 张，可换行）'
                         : '粘贴手动 Prompt，多条用 --- 分隔',
-                    maxLines: 2,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) => _startGenerate(),
+                    minLines: _sceneExpanded ? 5 : 2,
+                    maxLines: _sceneExpanded ? 12 : 4,
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.newline,
+                    // 不在键盘「完成」上触发生成，避免误触；只靠右侧生成按钮
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: _sceneExpanded ? '收起输入框' : '展开输入框',
+                  onPressed: () {
+                    setState(() => _sceneExpanded = !_sceneExpanded);
+                  },
+                  icon: Icon(
+                    _sceneExpanded
+                        ? Icons.unfold_less
+                        : Icons.unfold_more,
+                    color: AppTheme.textColor,
+                  ),
+                ),
                 Consumer<GenerateProvider>(
                   builder: (_, gen, __) => StickerButton(
                     text: gen.isGenerating ? '生成中' : '生成',
