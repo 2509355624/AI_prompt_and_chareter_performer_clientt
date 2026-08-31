@@ -3,13 +3,15 @@ import 'package:flutter/material.dart';
 import 'framed_network_image.dart';
 import 'sticker_widgets.dart';
 
-/// 全屏大图预览：左右翻页 + 保存（不会抢输入框焦点）
+/// 全屏大图预览：左右翻页 + 保存 + 提示词复制
 Future<void> showImageGallery(
   BuildContext context, {
   required List<String> imageUrls,
+  List<String> prompts = const [],
   int initialIndex = 0,
   bool framedPreview = true,
   required Future<void> Function(int index) onSaveIndex,
+  Future<void> Function(int index)? onCopyPromptIndex,
 }) {
   if (imageUrls.isEmpty) return Future.value();
   final index = initialIndex.clamp(0, imageUrls.length - 1);
@@ -21,9 +23,11 @@ Future<void> showImageGallery(
     pageBuilder: (ctx, _, __) {
       return ImageGalleryViewer(
         imageUrls: imageUrls,
+        prompts: prompts,
         initialIndex: index,
         framedPreview: framedPreview,
         onSaveIndex: onSaveIndex,
+        onCopyPromptIndex: onCopyPromptIndex,
       );
     },
   );
@@ -31,16 +35,20 @@ Future<void> showImageGallery(
 
 class ImageGalleryViewer extends StatefulWidget {
   final List<String> imageUrls;
+  final List<String> prompts;
   final int initialIndex;
   final bool framedPreview;
   final Future<void> Function(int index) onSaveIndex;
+  final Future<void> Function(int index)? onCopyPromptIndex;
 
   const ImageGalleryViewer({
     super.key,
     required this.imageUrls,
+    this.prompts = const [],
     required this.initialIndex,
     this.framedPreview = true,
     required this.onSaveIndex,
+    this.onCopyPromptIndex,
   });
 
   @override
@@ -65,6 +73,11 @@ class _ImageGalleryViewerState extends State<ImageGalleryViewer> {
     super.dispose();
   }
 
+  String get _currentPrompt {
+    if (_index < 0 || _index >= widget.prompts.length) return '';
+    return widget.prompts[_index];
+  }
+
   Future<void> _onSave() async {
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _saving = true);
@@ -75,9 +88,16 @@ class _ImageGalleryViewerState extends State<ImageGalleryViewer> {
     }
   }
 
+  Future<void> _onCopy() async {
+    final cb = widget.onCopyPromptIndex;
+    if (cb == null) return;
+    await cb(_index);
+  }
+
   @override
   Widget build(BuildContext context) {
     final total = widget.imageUrls.length;
+    final prompt = _currentPrompt.trim();
     return SafeArea(
       child: Material(
         color: Colors.transparent,
@@ -162,13 +182,40 @@ class _ImageGalleryViewerState extends State<ImageGalleryViewer> {
                 ],
               ),
             ),
+            if (prompt.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  prompt.length > 120 ? '${prompt.substring(0, 120)}…' : prompt,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: StickerButton(
-                text: _saving ? '保存中...' : '保存到手机',
-                icon: Icons.save_alt,
-                isLoading: _saving,
-                onPressed: _saving ? null : _onSave,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Row(
+                children: [
+                  if (widget.onCopyPromptIndex != null) ...[
+                    Expanded(
+                      child: StickerButton(
+                        text: '复制提示词',
+                        icon: Icons.copy,
+                        isPrimary: false,
+                        onPressed: _onCopy,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  Expanded(
+                    child: StickerButton(
+                      text: _saving ? '保存中...' : '保存到手机',
+                      icon: Icons.save_alt,
+                      isLoading: _saving,
+                      onPressed: _saving ? null : _onSave,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/generate_job.dart';
@@ -23,6 +24,8 @@ class GeneratePage extends StatefulWidget {
 
 class _GeneratePageState extends State<GeneratePage>
     with WidgetsBindingObserver {
+  static const int maxCount = 10;
+
   final _sceneController = TextEditingController();
   final _sceneFocus = FocusNode();
   int _count = 1;
@@ -30,6 +33,7 @@ class _GeneratePageState extends State<GeneratePage>
   bool _savingImage = false;
   /// 预览默认带小红书边框；保存时可另选原图/边框
   bool _previewWithFrame = true;
+  final Set<int> _selected = {};
 
   @override
   void initState() {
@@ -76,10 +80,11 @@ class _GeneratePageState extends State<GeneratePage>
       );
       return;
     }
+    setState(() => _selected.clear());
     final gen = context.read<GenerateProvider>();
     await gen.startGenerate(
       scene: scene,
-      count: _count,
+      count: _count.clamp(1, maxCount),
       mode: _mode,
     );
     if (!mounted) return;
@@ -96,7 +101,6 @@ class _GeneratePageState extends State<GeneratePage>
     setState(() => _savingImage = true);
     try {
       final url = _resolveUrl(imageUrl);
-      // 原图只来自内存；边框保存才本地全分辨率合成（可能要一两秒，不是重新下图）
       var bytes = await ImageBytesCache.getRaw(url);
       if (withFrame) {
         const frameKeySuffix = '|frame|full';
@@ -117,23 +121,14 @@ class _GeneratePageState extends State<GeneratePage>
         name:
             'comfy_${withFrame ? 'frame_' : ''}${DateTime.now().millisecondsSinceEpoch}',
       );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(withFrame ? '已保存边框图到相册' : '已保存原图到相册')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存失败：$e')),
-      );
     } finally {
       if (mounted) setState(() => _savingImage = false);
     }
   }
 
-  Future<void> _promptSave(String imageUrl) async {
+  Future<String?> _askSaveStyle() async {
     _dismissKeyboard();
-    final choice = await showModalBottomSheet<String>(
+    return showModalBottomSheet<String>(
       context: context,
       backgroundColor: AppTheme.card,
       shape: const RoundedRectangleBorder(
@@ -175,23 +170,166 @@ class _GeneratePageState extends State<GeneratePage>
         );
       },
     );
-    if (choice == 'plain') {
-      await _saveImage(imageUrl, withFrame: false);
-    } else if (choice == 'frame') {
-      await _saveImage(imageUrl, withFrame: true);
+  }
+
+  Future<void> _promptSave(String imageUrl) async {
+    final choice = await _askSaveStyle();
+    if (choice == null || !mounted) return;
+    try {
+      await _saveImage(imageUrl, withFrame: choice == 'frame');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(choice == 'frame' ? '已保存边框图到相册' : '已保存原图到相册'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存失败：$e')),
+      );
     }
   }
 
-  void _openGallery(List<String> images, int index) {
+  Future<void> _saveSelected(List<GenerateResultImage> results) async {
+    final indexes = _selected.toList()..sort();
+    if (indexes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先选中要保存的图片')),
+      );
+      return;
+    }
+    final choice = await _askSaveStyle();
+    if (choice == null || !mounted) return;
+    final withFrame = choice == 'frame';
+    setState(() => _savingImage = true);
+    var ok = 0;
+    try {
+      for (final i in indexes) {
+        if (i < 0 || i >= results.length) continue;
+        await _saveImage(results[i].url, withFrame: withFrame);
+        ok++;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已保存 $ok 张到相册')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('批量保存中断（已成功 $ok 张）：$e')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingImage = false);
+    }
+  }
+
+  Future<void> _copyPrompt(String prompt) async {
+    final text = prompt.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('这张没有提示词')),
+      );
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('提示词已复制')),
+    );
+  }
+
+  void _showPromptSheet(GenerateResultImage item, int index) {
     _dismissKeyboard();
-    if (images.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTheme.card,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        final prompt =
+            item.prompt.trim().isEmpty ? '（无提示词）' : item.prompt.trim();
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              12,
+              16,
+              16 + MediaQuery.viewInsetsOf(ctx).bottom,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '第 ${index + 1} 张提示词',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      prompt,
+                      style: const TextStyle(fontSize: 13, height: 1.4),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                StickerButton(
+                  text: '复制提示词',
+                  icon: Icons.copy,
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _copyPrompt(item.prompt);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _openGallery(List<GenerateResultImage> results, int index) {
+    _dismissKeyboard();
+    if (results.isEmpty) return;
     showImageGallery(
       context,
-      imageUrls: images.map(_resolveUrl).toList(),
+      imageUrls: results.map((e) => _resolveUrl(e.url)).toList(),
+      prompts: results.map((e) => e.prompt).toList(),
       initialIndex: index,
       framedPreview: _previewWithFrame,
-      onSaveIndex: (i) => _promptSave(images[i]),
+      onSaveIndex: (i) => _promptSave(results[i].url),
+      onCopyPromptIndex: (i) => _copyPrompt(results[i].prompt),
     );
+  }
+
+  void _toggleSelect(int index, int total) {
+    setState(() {
+      if (_selected.contains(index)) {
+        _selected.remove(index);
+      } else {
+        _selected.add(index);
+      }
+      _selected.removeWhere((i) => i < 0 || i >= total);
+    });
+  }
+
+  void _selectAll(int total) {
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(List.generate(total, (i) => i));
+    });
   }
 
   @override
@@ -235,17 +373,19 @@ class _GeneratePageState extends State<GeneratePage>
             Expanded(
               child: Consumer<GenerateProvider>(
                 builder: (_, gen, __) {
-                  final images = gen.currentJob?.images ?? const <String>[];
-                  if (images.isEmpty && !gen.isGenerating) {
+                  final results =
+                      gen.currentJob?.results ?? const <GenerateResultImage>[];
+                  if (results.isEmpty && !gen.isGenerating) {
                     return _buildEmpty();
                   }
                   return Column(
                     children: [
                       if (gen.isGenerating) _buildProgress(gen.currentJob),
+                      if (results.isNotEmpty) _buildBatchBar(results),
                       Expanded(
-                        child: images.length <= 1
-                            ? _buildSingle(images)
-                            : _buildGrid(images),
+                        child: results.length <= 1
+                            ? _buildSingle(results)
+                            : _buildGrid(results),
                       ),
                     ],
                   );
@@ -255,6 +395,44 @@ class _GeneratePageState extends State<GeneratePage>
             _buildInputBar(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildBatchBar(List<GenerateResultImage> results) {
+    final n = results.length;
+    final selectedCount = _selected.where((i) => i >= 0 && i < n).length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Row(
+        children: [
+          Text(
+            '已选 $selectedCount/$n',
+            style: const TextStyle(fontSize: 12, color: AppTheme.text2),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: () {
+              _dismissKeyboard();
+              _selectAll(n);
+            },
+            child: const Text('全选', style: TextStyle(fontSize: 12)),
+          ),
+          TextButton(
+            onPressed: () {
+              _dismissKeyboard();
+              setState(() => _selected.clear());
+            },
+            child: const Text('取消', style: TextStyle(fontSize: 12)),
+          ),
+          StickerButton(
+            text: _savingImage ? '保存中…' : '保存选中',
+            icon: Icons.download,
+            fontSize: 12,
+            isLoading: _savingImage,
+            onPressed: _savingImage ? null : () => _saveSelected(results),
+          ),
+        ],
       ),
     );
   }
@@ -427,48 +605,108 @@ class _GeneratePageState extends State<GeneratePage>
     );
   }
 
-  Widget _buildSingle(List<String> images) {
-    if (images.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    final url = images.first;
+  Widget _buildPromptMeta(GenerateResultImage item, int index) {
+    final has = item.prompt.trim().isNotEmpty;
+    final preview = has
+        ? (item.prompt.length > 48
+            ? '${item.prompt.substring(0, 48)}…'
+            : item.prompt)
+        : '（无提示词）';
     return Padding(
-      padding: const EdgeInsets.all(16),
-      child: StickerCard(
-        padding: EdgeInsets.zero,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            GestureDetector(
-              onTap: () => _openGallery(images, 0),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppTheme.radiusLg - 2),
-                child: FramedNetworkImage(
-                  imageUrl: _resolveUrl(url),
-                  showFrame: _previewWithFrame,
-                  fit: BoxFit.contain,
-                  onTap: () => _openGallery(images, 0),
-                ),
-              ),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              preview,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11, color: AppTheme.text2),
             ),
-            Positioned(
-              right: 12,
-              bottom: 12,
-              child:                 StickerButton(
-                  text: _savingImage ? '处理中…' : '保存到手机',
-                  icon: Icons.save_alt,
-                  fontSize: 12,
-                  isLoading: _savingImage,
-                  onPressed: _savingImage ? null : () => _promptSave(url),
-                ),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-          ],
-        ),
+            onPressed: () => _showPromptSheet(item, index),
+            child: const Text('查看', style: TextStyle(fontSize: 11)),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: () => _copyPrompt(item.prompt),
+            child: const Text('复制', style: TextStyle(fontSize: 11)),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildGrid(List<String> images) {
+  Widget _buildSingle(List<GenerateResultImage> results) {
+    if (results.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final item = results.first;
+    final selected = _selected.contains(0);
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        children: [
+          Expanded(
+            child: StickerCard(
+              padding: EdgeInsets.zero,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  GestureDetector(
+                    onTap: () => _openGallery(results, 0),
+                    onLongPress: () => _toggleSelect(0, results.length),
+                    child: ClipRRect(
+                      borderRadius:
+                          BorderRadius.circular(AppTheme.radiusLg - 2),
+                      child: FramedNetworkImage(
+                        imageUrl: _resolveUrl(item.url),
+                        showFrame: _previewWithFrame,
+                        fit: BoxFit.contain,
+                        onTap: () => _openGallery(results, 0),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    top: 10,
+                    child: _checkBadge(selected, () {
+                      _toggleSelect(0, results.length);
+                    }),
+                  ),
+                  Positioned(
+                    right: 12,
+                    bottom: 12,
+                    child: StickerButton(
+                      text: _savingImage ? '处理中…' : '保存到手机',
+                      icon: Icons.save_alt,
+                      fontSize: 12,
+                      isLoading: _savingImage,
+                      onPressed:
+                          _savingImage ? null : () => _promptSave(item.url),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          _buildPromptMeta(item, 0),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGrid(List<GenerateResultImage> results) {
     return Padding(
       padding: const EdgeInsets.all(12),
       child: GridView.builder(
@@ -476,21 +714,44 @@ class _GeneratePageState extends State<GeneratePage>
           crossAxisCount: 2,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
-          childAspectRatio: 0.7,
+          childAspectRatio: 0.58,
         ),
-        itemCount: images.length,
+        itemCount: results.length,
         itemBuilder: (_, i) {
-          final url = images[i];
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(AppTheme.radiusLg - 2),
-            child: StickerCard(
-              padding: EdgeInsets.zero,
-              child: FramedNetworkImage(
-                imageUrl: _resolveUrl(url),
-                showFrame: _previewWithFrame,
-                fit: BoxFit.cover,
-                onTap: () => _openGallery(images, i),
-              ),
+          final item = results[i];
+          final selected = _selected.contains(i);
+          return StickerCard(
+            padding: EdgeInsets.zero,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      ClipRRect(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(12),
+                        ),
+                        child: FramedNetworkImage(
+                          imageUrl: _resolveUrl(item.url),
+                          showFrame: _previewWithFrame,
+                          fit: BoxFit.cover,
+                          onTap: () => _openGallery(results, i),
+                        ),
+                      ),
+                      Positioned(
+                        left: 8,
+                        top: 8,
+                        child: _checkBadge(selected, () {
+                          _toggleSelect(i, results.length);
+                        }),
+                      ),
+                    ],
+                  ),
+                ),
+                _buildPromptMeta(item, i),
+              ],
             ),
           );
         },
@@ -498,7 +759,37 @@ class _GeneratePageState extends State<GeneratePage>
     );
   }
 
+  Widget _checkBadge(bool selected, VoidCallback onTap) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          _dismissKeyboard();
+          onTap();
+        },
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+                            color: selected
+                                ? AppTheme.accent
+                                : Colors.white.withValues(alpha: 0.92),
+            shape: BoxShape.circle,
+            border: Border.all(color: AppTheme.textColor, width: 2),
+          ),
+          child: Icon(
+            selected ? Icons.check : Icons.circle_outlined,
+            size: 16,
+            color: selected ? Colors.white : AppTheme.text2,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInputBar() {
+    final showCount = _mode == 'ai';
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       decoration: const BoxDecoration(
@@ -530,32 +821,34 @@ class _GeneratePageState extends State<GeneratePage>
                     setState(() => _previewWithFrame = !_previewWithFrame);
                   },
                 ),
-                const Spacer(),
-                const Text('数量：', style: TextStyle(fontSize: 13)),
-                IconButton(
-                  onPressed: _count > 1
-                      ? () {
-                          _dismissKeyboard();
-                          setState(() => _count--);
-                        }
-                      : null,
-                  icon: const Icon(Icons.remove_circle_outline),
-                  color: AppTheme.text2,
-                ),
-                Text(
-                  '$_count',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                IconButton(
-                  onPressed: _count < 30
-                      ? () {
-                          _dismissKeyboard();
-                          setState(() => _count++);
-                        }
-                      : null,
-                  icon: const Icon(Icons.add_circle_outline),
-                  color: AppTheme.text2,
-                ),
+                if (showCount) ...[
+                  const Spacer(),
+                  const Text('数量：', style: TextStyle(fontSize: 13)),
+                  IconButton(
+                    onPressed: _count > 1
+                        ? () {
+                            _dismissKeyboard();
+                            setState(() => _count--);
+                          }
+                        : null,
+                    icon: const Icon(Icons.remove_circle_outline),
+                    color: AppTheme.text2,
+                  ),
+                  Text(
+                    '$_count',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    onPressed: _count < maxCount
+                        ? () {
+                            _dismissKeyboard();
+                            setState(() => _count++);
+                          }
+                        : null,
+                    icon: const Icon(Icons.add_circle_outline),
+                    color: AppTheme.text2,
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 6),
@@ -566,7 +859,9 @@ class _GeneratePageState extends State<GeneratePage>
                   child: StickerInput(
                     controller: _sceneController,
                     focusNode: _sceneFocus,
-                    hintText: '输入场景描述...',
+                    hintText: _mode == 'ai'
+                        ? '输入场景描述…（最多 $maxCount 张）'
+                        : '粘贴手动 Prompt，多条用 --- 分隔',
                     maxLines: 2,
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => _startGenerate(),

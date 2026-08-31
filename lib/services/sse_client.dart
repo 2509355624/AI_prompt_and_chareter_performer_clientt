@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 /// 解析 SSE：支持命名事件（`event:` + `data:`）与仅 `data:` 的流。
@@ -86,15 +85,31 @@ class SseParser {
 
 /// 从 Comfy / 任务 JSON 中抽出图片 URL 列表（兼容 `{url}` 对象与纯字符串）。
 List<String> extractImageUrls(dynamic images) {
+  return extractGenerateImages(images).map((e) => e.url).toList();
+}
+
+class GenerateImageRef {
+  final String url;
+  final String prompt;
+
+  const GenerateImageRef({required this.url, this.prompt = ''});
+}
+
+/// 抽出带提示词的图片列表。
+List<GenerateImageRef> extractGenerateImages(dynamic images) {
   if (images is! List) return const [];
-  final urls = <String>[];
+  final out = <GenerateImageRef>[];
   for (final item in images) {
     if (item is String && item.isNotEmpty) {
-      urls.add(item);
+      out.add(GenerateImageRef(url: item));
     } else if (item is Map) {
       final u = item['url']?.toString() ?? '';
-      if (u.isNotEmpty) urls.add(u);
+      if (u.isEmpty) continue;
+      out.add(GenerateImageRef(
+        url: u,
+        prompt: item['prompt']?.toString() ?? '',
+      ));
     }
   }
-  return urls;
+  return out;
 }

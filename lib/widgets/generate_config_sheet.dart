@@ -293,11 +293,11 @@ class _GenerateConfigSheetState extends State<GenerateConfigSheet> {
                       _label('预设名称'),
                       _field(_name, onChanged: (_) => _pushDraft()),
                       const SizedBox(height: 12),
-                      _label('底模 basePrompt（角色特征）'),
-                      _field(
-                        _basePrompt,
-                        maxLines: 4,
-                        onChanged: (_) => _pushDraft(),
+                      _longTextBlock(
+                        label: '底模 basePrompt（角色特征）',
+                        controller: _basePrompt,
+                        hint: '点击「编辑」修改长文本，避免滑动误触',
+                        maxLines: 10,
                       ),
                       const SizedBox(height: 16),
                       _sectionTitle('AI 扩写提示词'),
@@ -306,11 +306,21 @@ class _GenerateConfigSheetState extends State<GenerateConfigSheet> {
                         style: TextStyle(fontSize: 12, color: AppTheme.text2),
                       ),
                       const SizedBox(height: 8),
-                      _label('System'),
-                      _field(_aiSystem, maxLines: 5),
+                      _longTextBlock(
+                        label: 'System',
+                        controller: _aiSystem,
+                        hint: '点击「编辑」打开编辑窗口',
+                        maxLines: 14,
+                        pushDraftOnSave: false,
+                      ),
                       const SizedBox(height: 8),
-                      _label('User 模板（可用 {scene} {count}）'),
-                      _field(_aiUser, maxLines: 3),
+                      _longTextBlock(
+                        label: 'User 模板（可用 {scene} {count}）',
+                        controller: _aiUser,
+                        hint: '点击「编辑」打开编辑窗口',
+                        maxLines: 8,
+                        pushDraftOnSave: false,
+                      ),
                       const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -436,11 +446,11 @@ class _GenerateConfigSheetState extends State<GenerateConfigSheet> {
                         },
                       ),
                       const SizedBox(height: 12),
-                      _label('Negative'),
-                      _field(
-                        _negative,
-                        maxLines: 3,
-                        onChanged: (_) => _pushDraft(),
+                      _longTextBlock(
+                        label: 'Negative',
+                        controller: _negative,
+                        hint: '点击「编辑」修改负向提示词',
+                        maxLines: 8,
                       ),
                       if (!isKrea2) ...[
                         const SizedBox(height: 12),
@@ -584,6 +594,137 @@ class _GenerateConfigSheetState extends State<GenerateConfigSheet> {
     if (value.isEmpty) return list;
     if (list.contains(value)) return list;
     return [value, ...list];
+  }
+
+  Widget _longTextBlock({
+    required String label,
+    required TextEditingController controller,
+    required String hint,
+    int maxLines = 8,
+    bool pushDraftOnSave = true,
+  }) {
+    final text = controller.text.trim();
+    final preview = text.isEmpty
+        ? '（空）点编辑填写'
+        : (text.length > 90 ? '${text.substring(0, 90)}…' : text);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: _label(label)),
+            TextButton.icon(
+              onPressed: () => _openLongTextEditor(
+                title: label,
+                controller: controller,
+                maxLines: maxLines,
+                pushDraftOnSave: pushDraftOnSave,
+              ),
+              icon: const Icon(Icons.edit_outlined, size: 16),
+              label: const Text('编辑', style: TextStyle(fontSize: 12)),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ],
+        ),
+        InkWell(
+          onTap: () => _openLongTextEditor(
+            title: label,
+            controller: controller,
+            maxLines: maxLines,
+            pushDraftOnSave: pushDraftOnSave,
+          ),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+              border: Border.all(color: AppTheme.textColor, width: 2),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  preview,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: text.isEmpty ? AppTheme.textMute : AppTheme.textColor,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  hint,
+                  style: const TextStyle(fontSize: 11, color: AppTheme.textMute),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openLongTextEditor({
+    required String title,
+    required TextEditingController controller,
+    int maxLines = 8,
+    bool pushDraftOnSave = true,
+  }) async {
+    final draft = TextEditingController(text: controller.text);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: AppTheme.card,
+          title: Text(title, style: const TextStyle(fontSize: 16)),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: TextField(
+              controller: draft,
+              maxLines: maxLines,
+              autofocus: true,
+              style: const TextStyle(fontSize: 14),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: AppTheme.surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                  borderSide:
+                      const BorderSide(color: AppTheme.textColor, width: 2),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                  borderSide:
+                      const BorderSide(color: AppTheme.textColor, width: 2),
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('完成', style: TextStyle(color: AppTheme.accent)),
+            ),
+          ],
+        );
+      },
+    );
+    if (ok == true) {
+      setState(() => controller.text = draft.text);
+      if (pushDraftOnSave) _pushDraft();
+    }
+    draft.dispose();
   }
 
   Widget _sectionTitle(String text) {

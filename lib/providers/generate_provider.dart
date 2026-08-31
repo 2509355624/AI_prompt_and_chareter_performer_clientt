@@ -400,13 +400,15 @@ class GenerateProvider extends ChangeNotifier {
     }
     if (_isGenerating) return;
 
+    final safeCount = count.clamp(1, 10);
+
     _stopPolling();
     _isGenerating = true;
     _lastError = null;
     _currentJob = GenerateJob(
       id: '',
       status: JobStatus.queued,
-      totalCount: count,
+      totalCount: safeCount,
     );
     notifyListeners();
 
@@ -416,7 +418,7 @@ class GenerateProvider extends ChangeNotifier {
       final stream = _api.generateStream(
         presetId: presetId,
         scene: scene,
-        count: count,
+        count: safeCount,
         mode: mode,
         overrides: overrides,
       );
@@ -468,7 +470,8 @@ class GenerateProvider extends ChangeNotifier {
   void _handleGenerateEvent(Map<String, dynamic> event) {
     final phase = event['phase']?.toString() ?? '';
     final jobId = event['jobId']?.toString();
-    final images = extractImageUrls(event['images']);
+    final refs = extractGenerateImages(event['images']);
+    final results = refs.map(GenerateResultImage.fromRef).toList();
 
     switch (phase) {
       case 'queued':
@@ -479,7 +482,9 @@ class GenerateProvider extends ChangeNotifier {
           totalCount: (event['count'] as num?)?.toInt() ??
               _currentJob?.totalCount ??
               0,
-          images: images.isNotEmpty ? images : (_currentJob?.images ?? const []),
+          results: results.isNotEmpty
+              ? results
+              : (_currentJob?.results ?? const []),
         );
         break;
       case 'running':
@@ -504,25 +509,27 @@ class GenerateProvider extends ChangeNotifier {
           currentPrompt: event['prompt']?.toString() ??
               event['message']?.toString(),
           elapsedMs: (event['elapsedMs'] as num?)?.toInt(),
-          images: images.isNotEmpty ? images : null,
+          results: results.isNotEmpty ? results : null,
         );
         break;
       case 'done':
       case 'completed':
-        final doneImages =
-            images.isNotEmpty ? images : (_currentJob?.images ?? const []);
+        final doneResults = results.isNotEmpty
+            ? results
+            : (_currentJob?.results ?? const []);
         debugPrint(
           '[Generate] done jobId=${jobId ?? _currentJob?.id} '
-          'imageCount=${doneImages.length} urls=$doneImages',
+          'imageCount=${doneResults.length} '
+          'urls=${doneResults.map((e) => e.url).toList()}',
         );
         _currentJob = GenerateJob(
           id: jobId ?? _currentJob?.id ?? '',
           status: JobStatus.done,
-          images: doneImages,
-          totalCount: doneImages.isNotEmpty
-              ? doneImages.length
+          results: doneResults,
+          totalCount: doneResults.isNotEmpty
+              ? doneResults.length
               : (_currentJob?.totalCount ?? 0),
-          doneCount: doneImages.length,
+          doneCount: doneResults.length,
           elapsedMs: (event['elapsedMs'] as num?)?.toInt(),
         );
         break;
@@ -542,13 +549,13 @@ class GenerateProvider extends ChangeNotifier {
         _lastError = _currentJob?.error;
         break;
       default:
-        if (images.isNotEmpty) {
+        if (results.isNotEmpty) {
           _currentJob = (_currentJob ??
                   GenerateJob(id: jobId ?? '', status: JobStatus.running))
               .copyWith(
             id: (jobId != null && jobId.isNotEmpty) ? jobId : null,
-            images: images,
-            doneCount: images.length,
+            results: results,
+            doneCount: results.length,
           );
         } else if (jobId != null && jobId.isNotEmpty) {
           _currentJob = (_currentJob ??
