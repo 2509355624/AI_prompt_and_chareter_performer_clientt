@@ -91,8 +91,39 @@ class ApiService {
     return Map<String, dynamic>.from(response.data);
   }
 
+  Future<Map<String, dynamic>> upsertGeneratePreset(
+    Map<String, dynamic> preset,
+  ) async {
+    final response = await _dio.post(
+      '/api/comfy/generate-presets',
+      data: preset,
+    );
+    return Map<String, dynamic>.from(response.data);
+  }
+
+  Future<Map<String, dynamic>> deleteGeneratePreset(String id) async {
+    final response = await _dio.delete('/api/comfy/generate-presets/$id');
+    return Map<String, dynamic>.from(response.data);
+  }
+
+  Future<Map<String, dynamic>> activateGeneratePreset(String id) async {
+    final response =
+        await _dio.post('/api/comfy/generate-presets/$id/activate');
+    return Map<String, dynamic>.from(response.data);
+  }
+
   Future<Map<String, dynamic>> getGenerateSettings() async {
     final response = await _dio.get('/api/comfy/generate-settings');
+    return Map<String, dynamic>.from(response.data);
+  }
+
+  Future<Map<String, dynamic>> putGenerateSettings(
+    Map<String, dynamic> settings,
+  ) async {
+    final response = await _dio.put(
+      '/api/comfy/generate-settings',
+      data: {'settings': settings},
+    );
     return Map<String, dynamic>.from(response.data);
   }
 
@@ -101,6 +132,25 @@ class ApiService {
       final response = await _dio.get('/api/comfy/checkpoints');
       final data = Map<String, dynamic>.from(response.data);
       return List<String>.from(data['checkpoints'] ?? []);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> getWorkflowOptions() async {
+    try {
+      final response = await _dio.get('/api/comfy/workflow-options');
+      return Map<String, dynamic>.from(response.data);
+    } catch (_) {
+      return {'ok': false, 'checkpoints': [], 'loras': []};
+    }
+  }
+
+  Future<List<String>> getUpscaleModels() async {
+    try {
+      final response = await _dio.get('/api/comfy/upscale-models');
+      final data = Map<String, dynamic>.from(response.data);
+      return List<String>.from(data['models'] ?? []);
     } catch (_) {
       return [];
     }
@@ -368,15 +418,6 @@ class ApiService {
       return true;
     } catch (_) {
       return false;
-    }
-  }
-
-  Future<Map<String, dynamic>> getWorkflowOptions() async {
-    try {
-      final response = await _dio.get('/api/comfy/workflow-options');
-      return Map<String, dynamic>.from(response.data);
-    } catch (_) {
-      return {};
     }
   }
 

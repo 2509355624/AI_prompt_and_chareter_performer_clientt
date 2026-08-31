@@ -16,11 +16,31 @@ class GenerateProvider extends ChangeNotifier {
 
   List<GeneratePreset> _presets = [];
   String? _activePresetId;
+  GeneratePreset? _draft;
+  GenerateExpandSettings _expandSettings = const GenerateExpandSettings();
+  List<String> _checkpoints = [];
+  List<String> _loras = [];
+  List<String> _upscaleModels = [];
+  List<String> _samplerOptions = const [
+    'euler',
+    'euler_ancestral',
+    'dpmpp_2m',
+    'dpmpp_sde',
+    'uni_pc',
+  ];
+  List<String> _schedulerOptions = const [
+    'simple',
+    'normal',
+    'karras',
+    'exponential',
+    'sgm_uniform',
+  ];
   GenerateJob? _currentJob;
   bool _isGenerating = false;
   String? _lastError;
   Timer? _pollTimer;
   bool _resuming = false;
+  bool _savingPreset = false;
 
   List<GeneratePreset> get presets => _presets;
   String? get activePresetId => _activePresetId;
@@ -33,23 +53,59 @@ class GenerateProvider extends ChangeNotifier {
     }
   }
 
+  /// 当前编辑中的配置（选预设 / 改表单后即时生效，不必先保存）
+  GeneratePreset? get draft => _draft ?? activePreset;
+  GenerateExpandSettings get expandSettings => _expandSettings;
+  List<String> get checkpoints => _checkpoints;
+  List<String> get loraNames => _loras;
+  List<String> get upscaleModels => _upscaleModels;
+  List<String> get samplerOptions => _samplerOptions;
+  List<String> get schedulerOptions => _schedulerOptions;
+  bool get savingPreset => _savingPreset;
+
   GenerateJob? get currentJob => _currentJob;
   bool get isGenerating => _isGenerating;
   String? get lastError => _lastError;
 
   GenerateProvider(this._api);
 
+  void _applyPresetList(Map<String, dynamic> data) {
+    final list = List.from(data['presets'] ?? []);
+    _presets = list
+        .map((e) => GeneratePreset.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+    _activePresetId = data['activePresetId']?.toString();
+    if (_activePresetId?.isEmpty == true) _activePresetId = null;
+    if (_activePresetId == null && _presets.isNotEmpty) {
+      _activePresetId = _presets.first.id;
+    }
+    final active = activePreset;
+    if (active != null) {
+      _draft = active;
+      if (active.samplerOptions.isNotEmpty) {
+        _samplerOptions = active.samplerOptions;
+      }
+      if (active.schedulerOptions.isNotEmpty) {
+        _schedulerOptions = active.schedulerOptions;
+      }
+    }
+  }
+
   Future<void> loadPresets() async {
     try {
       final data = await _api.getGeneratePresets();
-      final list = List.from(data['presets'] ?? []);
-      _presets = list
-          .map((e) => GeneratePreset.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
-      _activePresetId = data['activePresetId']?.toString();
-      if (_activePresetId?.isEmpty == true) _activePresetId = null;
-      if (_activePresetId == null && _presets.isNotEmpty) {
-        _activePresetId = _presets.first.id;
+      _applyPresetList(data);
+      final defaults = data['defaults'];
+      if (defaults is Map) {
+        final d = Map<String, dynamic>.from(defaults);
+        final so = d['samplerOptions'];
+        final sch = d['schedulerOptions'];
+        if (so is List && so.isNotEmpty) {
+          _samplerOptions = so.map((e) => e.toString()).toList();
+        }
+        if (sch is List && sch.isNotEmpty) {
+          _schedulerOptions = sch.map((e) => e.toString()).toList();
+        }
       }
       notifyListeners();
     } catch (e) {
@@ -57,8 +113,183 @@ class GenerateProvider extends ChangeNotifier {
     }
   }
 
-  void selectPreset(String id) {
+  Future<void> loadConfigOptions() async {
+    try {
+      final opts = await _api.getWorkflowOptions();
+      final ups = await _api.getUpscaleModels();
+      final settingsData = await _api.getGenerateSettings();
+
+      _checkpoints = List<String>.from(opts['checkpoints'] ?? []);
+      _loras = List<String>.from(opts['loras'] ?? []);
+      _upscaleModels = ups;
+
+      final defaults = opts['defaults'];
+      if (defaults is Map) {
+        final d = Map<String, dynamic>.from(defaults);
+        final so = d['samplerOptions'];
+        final sch = d['schedulerOptions'];
+        if (so is List && so.isNotEmpty) {
+          _samplerOptions = so.map((e) => e.toString()).toList();
+        }
+        if (sch is List && sch.isNotEmpty) {
+          _schedulerOptions = sch.map((e) => e.toString()).toList();
+        }
+      }
+
+      final settings = settingsData['settings'];
+      if (settings is Map) {
+        _expandSettings = GenerateExpandSettings.fromJson(
+          Map<String, dynamic>.from(settings),
+        );
+      } else {
+        final defaultsSettings = settingsData['defaults'];
+        if (defaultsSettings is Map) {
+          _expandSettings = GenerateExpandSettings.fromJson(
+            Map<String, dynamic>.from(defaultsSettings),
+          );
+        }
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Load config options error: $e');
+    }
+  }
+
+  Future<void> selectPreset(String id) async {
+    if (id.isEmpty) return;
     _activePresetId = id;
+    try {
+      final found = _presets.firstWhere((p) => p.id == id);
+      _draft = found;
+    } catch (_) {
+      _draft = null;
+    }
+    notifyListeners();
+    try {
+      final data = await _api.activateGeneratePreset(id);
+      if (data['ok'] == true) {
+        _applyPresetList(data);
+      }
+    } catch (e) {
+      debugPrint('Activate preset failed: $e');
+    }
+    notifyListeners();
+  }
+
+  void updateDraft(GeneratePreset next) {
+    _draft = next;
+    notifyListeners();
+  }
+
+  void updateExpandSettings(GenerateExpandSettings next) {
+    _expandSettings = next;
+    notifyListeners();
+  }
+
+  Future<bool> saveDraftPreset() async {
+    final d = draft;
+    if (d == null) return false;
+    _savingPreset = true;
+    notifyListeners();
+    try {
+      final body = d.toJson();
+      if (d.isKrea2) {
+        body['workflowEngine'] = 'krea2';
+        body['unetName'] =
+            d.unetName.isNotEmpty ? d.unetName : d.checkpointName;
+        body['checkpointName'] =
+            d.checkpointName.isNotEmpty ? d.checkpointName : d.unetName;
+        body['enableHires'] = false;
+        final loras = List<LoraConfig>.from(d.loras);
+        while (loras.length < 3) {
+          loras.add(const LoraConfig(name: '(none)', strengthModel: 0));
+        }
+        body['loras'] = [
+          loras[0].toJson(),
+          {'name': '(none)', 'strengthModel': 0, 'strengthClip': 0},
+          {'name': '(none)', 'strengthModel': 0, 'strengthClip': 0},
+        ];
+      }
+      final data = await _api.upsertGeneratePreset(body);
+      if (data['ok'] != true) {
+        _lastError = data['error']?.toString() ?? '保存失败';
+        return false;
+      }
+      _applyPresetList(data);
+      final saved = data['preset'];
+      if (saved is Map) {
+        _draft = GeneratePreset.fromJson(Map<String, dynamic>.from(saved));
+        _activePresetId = _draft!.id;
+      }
+      return true;
+    } catch (e) {
+      _lastError = e.toString();
+      debugPrint('Save preset error: $e');
+      return false;
+    } finally {
+      _savingPreset = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> deleteActivePreset() async {
+    final id = _activePresetId;
+    if (id == null || id.isEmpty) return false;
+    try {
+      final data = await _api.deleteGeneratePreset(id);
+      if (data['ok'] != true) {
+        _lastError = data['error']?.toString() ?? '删除失败';
+        return false;
+      }
+      _applyPresetList(data);
+      return true;
+    } catch (e) {
+      _lastError = e.toString();
+      return false;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<bool> saveExpandSettings() async {
+    try {
+      final data = await _api.putGenerateSettings(_expandSettings.toJson());
+      if (data['ok'] != true) {
+        _lastError = data['error']?.toString() ?? '保存失败';
+        return false;
+      }
+      final settings = data['settings'];
+      if (settings is Map) {
+        _expandSettings = GenerateExpandSettings.fromJson(
+          Map<String, dynamic>.from(settings),
+        );
+      }
+      return true;
+    } catch (e) {
+      _lastError = e.toString();
+      return false;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  void createBlankPreset() {
+    final blank = GeneratePreset(
+      id: '',
+      name: '新预设',
+      basePrompt: draft?.basePrompt ?? '',
+      negativePrompt: draft?.negativePrompt ?? '',
+      width: draft?.width ?? 832,
+      height: draft?.height ?? 1216,
+      steps: draft?.steps ?? 6,
+      cfg: draft?.cfg ?? 1,
+      sampler: draft?.sampler ?? 'euler',
+      scheduler: draft?.scheduler ?? 'simple',
+      checkpointName: draft?.checkpointName ?? '',
+      workflowEngine: draft?.workflowEngine ?? 'sdxl',
+    );
+    _draft = blank;
+    _activePresetId = null;
     notifyListeners();
   }
 
@@ -98,30 +329,22 @@ class GenerateProvider extends ChangeNotifier {
   Future<void> _applyJobSnapshot(GenerateJob job) async {
     debugPrint(
       '[Generate] snapshot id=${job.id} status=${job.status} '
-      'images=${job.images.length} urls=${job.images}',
+      'images=${job.images.length} done=${job.doneCount}/${job.totalCount}',
     );
     _currentJob = job;
-    if (_isTerminal(job.status)) {
-      _isGenerating = false;
-      _stopPolling();
-      await _persistActiveJobId(null);
-      if (job.status == JobStatus.error) {
-        _lastError = job.error;
-      }
-    } else {
+    if (!_isTerminal(job.status) && job.id.isNotEmpty) {
       _isGenerating = true;
-      if (job.id.isNotEmpty) {
-        await _persistActiveJobId(job.id);
-      }
+      await _persistActiveJobId(job.id);
+    } else {
+      _isGenerating = false;
+      await _persistActiveJobId(null);
     }
     notifyListeners();
   }
 
   void _startPolling(String jobId) {
-    if (jobId.isEmpty) return;
     _stopPolling();
     _isGenerating = true;
-    unawaited(_persistActiveJobId(jobId));
     notifyListeners();
 
     Future<void> tick() async {
@@ -169,7 +392,12 @@ class GenerateProvider extends ChangeNotifier {
     int count = 1,
     String mode = 'ai',
   }) async {
-    if (_activePresetId == null) return;
+    final presetId = _activePresetId ?? draft?.id;
+    if (presetId == null || presetId.isEmpty) {
+      _lastError = '请先选择或保存预设';
+      notifyListeners();
+      return;
+    }
     if (_isGenerating) return;
 
     _stopPolling();
@@ -182,12 +410,15 @@ class GenerateProvider extends ChangeNotifier {
     );
     notifyListeners();
 
+    final overrides = draft?.toOverrides() ?? const <String, dynamic>{};
+
     try {
       final stream = _api.generateStream(
-        presetId: _activePresetId!,
+        presetId: presetId,
         scene: scene,
         count: count,
         mode: mode,
+        overrides: overrides,
       );
 
       await for (final event in stream) {

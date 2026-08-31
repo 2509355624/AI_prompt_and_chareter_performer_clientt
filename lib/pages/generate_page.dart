@@ -9,6 +9,7 @@ import '../utils/gallery_saver.dart';
 import '../utils/image_bytes_cache.dart';
 import '../utils/sticker_frame.dart';
 import '../widgets/framed_network_image.dart';
+import '../widgets/generate_config_sheet.dart';
 import '../widgets/image_gallery_viewer.dart';
 import '../widgets/sticker_widgets.dart';
 
@@ -75,11 +76,19 @@ class _GeneratePageState extends State<GeneratePage>
       );
       return;
     }
-    await context.read<GenerateProvider>().startGenerate(
-          scene: scene,
-          count: _count,
-          mode: _mode,
-        );
+    final gen = context.read<GenerateProvider>();
+    await gen.startGenerate(
+      scene: scene,
+      count: _count,
+      mode: _mode,
+    );
+    if (!mounted) return;
+    final err = gen.lastError;
+    if (err != null && err.isNotEmpty && !gen.isGenerating) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err)),
+      );
+    }
   }
 
   Future<void> _saveImage(String imageUrl, {required bool withFrame}) async {
@@ -195,6 +204,14 @@ class _GeneratePageState extends State<GeneratePage>
         appBar: AppBar(
           title: const Text('✨ 图片生成'),
           actions: [
+            IconButton(
+              tooltip: '预设配置',
+              onPressed: () {
+                _dismissKeyboard();
+                showGenerateConfigSheet(context);
+              },
+              icon: const Icon(Icons.tune),
+            ),
             Consumer<GenerateProvider>(
               builder: (_, gen, __) {
                 if (!gen.isGenerating) return const SizedBox.shrink();
@@ -250,52 +267,103 @@ class _GeneratePageState extends State<GeneratePage>
         child: Consumer<GenerateProvider>(
           builder: (_, gen, __) {
             if (gen.presets.isEmpty) {
-              return const Center(
-                child: Text(
-                  '加载预设中...',
-                  style: TextStyle(color: AppTheme.textMute),
-                ),
-              );
-            }
-            return ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: gen.presets.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (_, i) {
-                final preset = gen.presets[i];
-                final selected = gen.activePresetId == preset.id;
-                return GestureDetector(
-                  onTap: () {
-                    _dismissKeyboard();
-                    gen.selectPreset(preset.id);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: selected ? AppTheme.accent : AppTheme.card,
-                      border: Border.all(color: AppTheme.textColor, width: 2),
-                      borderRadius: BorderRadius.circular(999),
-                      boxShadow: selected ? AppTheme.stickerShadowSm : null,
-                    ),
-                    child: Center(
-                      child: Text(
-                        preset.name,
-                        style: TextStyle(
-                          color: selected ? Colors.white : AppTheme.textColor,
-                          fontWeight:
-                              selected ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 13,
-                        ),
-                      ),
+              return Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '加载预设中...',
+                      style: TextStyle(color: AppTheme.textMute),
                     ),
                   ),
-                );
-              },
+                  _configChip(),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: gen.presets.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (_, i) {
+                      final preset = gen.presets[i];
+                      final selected = gen.activePresetId == preset.id;
+                      return GestureDetector(
+                        onTap: () {
+                          _dismissKeyboard();
+                          gen.selectPreset(preset.id);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: selected ? AppTheme.accent : AppTheme.card,
+                            border:
+                                Border.all(color: AppTheme.textColor, width: 2),
+                            borderRadius: BorderRadius.circular(999),
+                            boxShadow:
+                                selected ? AppTheme.stickerShadowSm : null,
+                          ),
+                          child: Center(
+                            child: Text(
+                              preset.name,
+                              style: TextStyle(
+                                color: selected
+                                    ? Colors.white
+                                    : AppTheme.textColor,
+                                fontWeight: selected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _configChip(),
+              ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _configChip() {
+    return GestureDetector(
+      onTap: () {
+        _dismissKeyboard();
+        showGenerateConfigSheet(context);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          border: Border.all(color: AppTheme.textColor, width: 2),
+          borderRadius: BorderRadius.circular(999),
+          boxShadow: AppTheme.stickerShadowSm,
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.tune, size: 16, color: AppTheme.textColor),
+            SizedBox(width: 4),
+            Text(
+              '配置',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textColor,
+              ),
+            ),
+          ],
         ),
       ),
     );
